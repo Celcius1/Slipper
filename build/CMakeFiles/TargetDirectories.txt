@@ -1,5 +1,0 @@
-/home/Celcius1/projects/slipper/build/CMakeFiles/slipperd.dir
-/home/Celcius1/projects/slipper/build/CMakeFiles/slip.dir
-/home/Celcius1/projects/slipper/build/CMakeFiles/slipper_tests.dir
-/home/Celcius1/projects/slipper/build/CMakeFiles/edit_cache.dir
-/home/Celcius1/projects/slipper/build/CMakeFiles/rebuild_cache.dir
