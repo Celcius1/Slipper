@@ -1,7 +1,7 @@
 # Slipper (v0.1.0-alpha)
 An OpenRC-native C++ package management daemon for Gentoo Linux.
 
-Copyright (c) 2026 Cel-Tech-Serv Pty Ltd. All rights reserved.
+Copyright (c) 2026 Cel-Tech-Serv Pty Ltd. Licensed under the GNU General Public License v2.0 (GPL-2.0).
 
 ## Installation
 
