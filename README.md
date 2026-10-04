@@ -17,6 +17,8 @@ The Slipper installation process is fully automated. **Do not run the installer 
 
 Slipper is split into a background daemon (`slipperd`) and a lightweight frontend client (`slip`). 
 
+User must be in the wheel group to be able to use slipper without elevated privledges.
+
 ### Merging Packages (Slip In)
 Install specific packages or upgrade the system:
 slip --in -avs sl
