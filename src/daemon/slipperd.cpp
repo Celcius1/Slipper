@@ -1,21 +1,23 @@
-#include "iostream"
-#include "algorithm"
-#include "cctype"
-#include "string"
-#include "vector"
-#include "memory"
-#include "fstream"
-#include "filesystem"
-#include "sstream"
-#include "chrono"
-#include "sys/socket.h"
-#include "sys/un.h"
-#include "unistd.h"
-#include "sys/stat.h"
-#include "sys/wait.h"
-#include "signal.h"
-#include "cstring"
-#include "grp.h"
+#include <iostream>
+#include <algorithm>
+#include <cctype>
+#include <string>
+#include <vector>
+#include <memory>
+#include <fstream>
+#include <filesystem>
+#include <sstream>
+#include <chrono>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <cstring>
+#include <grp.h>
+#include <fcntl.h>
+#include <string_view>
 #include "../../include/Logger.hpp"
 #include "../../include/dep/Atom.hpp"
 #include "../../include/Versions.hpp"
@@ -37,7 +39,7 @@ const std::string C_CYAN = "\033[36m";
 const std::string C_BOLD = "\033[1m";
 
 void initialiseDaemon() {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("initialiseDaemon", "Entering routine: initialiseDaemon.");
         Logger::logDebug("initialiseDaemon", "Checking environment dependencies...");
         Logger::logDebug("initialiseDaemon", "Exiting routine: initialiseDaemon successfully.");
@@ -59,35 +61,40 @@ void sigchld_handler(int s) {
 }
 
 int main() {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("slipperd", "Privileged Slipper Daemon initialising IPC socket.");
     }
 
-    int server_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    int server_sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (server_sock < 0) {
-        Logger::logInfo("slipperd", "Fatal: Failed to create IPC socket.");
+        Logger::logError("slipperd", std::string("Fatal: Failed to create IPC socket: ") + strerror(errno));
         return 1;
     }
 
-    std::string socket_path = "/run/slipper/slipper.sock";
-    unlink(socket_path.c_str());
+    std::error_code ec;
+    std::filesystem::create_directories("/run/slipper", ec);
+    if (ec) {
+        Logger::logError("slipperd", "Fatal: Could not create /run/slipper directory: " + ec.message());
+        return 1;
+    }
 
-    struct sockaddr_un addr;
+    constexpr std::string_view socket_path = "/run/slipper/slipper.sock";
+    unlink(socket_path.data());
+
+    sockaddr_un addr;
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, socket_path.data(), sizeof(addr.sun_path) - 1);
 
-    if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        Logger::logInfo("slipperd", "Fatal: Failed to bind IPC socket.");
+    if (bind(server_sock, reinterpret_cast< sockaddr* >(&addr), sizeof(addr)) == -1) {
+        Logger::logError("slipperd", std::string("Fatal: Failed to bind IPC socket: ") + strerror(errno));
         return 1;
     }
 
-    // --- NEW: Explicitly hand socket access to the wheel group ---
-    struct group *grp = getgrnam("wheel");
+    group* grp = getgrnam("wheel");
     if (grp != nullptr) {
-        chown(socket_path.c_str(), 0, grp->gr_gid);
+        chown(socket_path.data(), 0, grp->gr_gid);
     }
-    chmod(socket_path.c_str(), 0660);
-    // -------------------------------------------------------------
+    chmod(socket_path.data(), 0660);
 
     listen(server_sock, 5);
 
@@ -100,7 +107,7 @@ int main() {
         return 1;
     }
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("slipperd", "Daemon listening on /run/slipper/slipper.sock");
     }
 
@@ -108,22 +115,24 @@ int main() {
         int client_sock = accept(server_sock, NULL, NULL);
         if (client_sock < 0) continue;
 
-        if (std::getenv("DEBUG")) {
+        // SECURITY: Explicitly seal the client socket from child processes
+        fcntl(client_sock, F_SETFD, FD_CLOEXEC);
+
+        if (Logger::isDebugEnabled()) {
             Logger::logDebug("slipperd", "Incoming connection accepted. Forking child process.");
         }
 
         pid_t pid = fork();
         if (pid == 0) {
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("slipperd", "Client connection accepted. Resetting SIGCHLD to default in child fork.");
             }
             
-            // Restore SIGCHLD so Executor's synchronous waitpid() functions correctly
-            struct sigaction sa;
-            sa.sa_handler = SIG_DFL;
-            sigemptyset(&sa.sa_mask);
-            sa.sa_flags = 0;
-            sigaction(SIGCHLD, &sa, NULL);
+            struct sigaction sa_child;
+            sa_child.sa_handler = SIG_DFL;
+            sigemptyset(&sa_child.sa_mask);
+            sa_child.sa_flags = 0;
+            sigaction(SIGCHLD, &sa_child, NULL);
 
             close(server_sock);
             dup2(client_sock, STDOUT_FILENO);
@@ -136,15 +145,9 @@ int main() {
                 std::string arg_str(buffer);
                 
                 auto str_args = tokenizeArgs(arg_str);
-                std::vector< char* > argv_vec;
-                argv_vec.push_back(const_cast< char* >("slip"));
-                for (auto& a : str_args) argv_vec.push_back(const_cast< char* >(a.c_str()));
                 
-                int argc = argv_vec.size();
-                char** argv = argv_vec.data();
-
-                if (argc < 2) {
-                    std::cout << "Usage: slip  [options] " << std::endl;
+                if (str_args.empty()) {
+                    std::cout << "Usage: slip [options] " << std::endl;
                     std::cout << "Modes:" << std::endl;
                     std::cout << "  --in           Install/Merge packages" << std::endl;
                     std::cout << "  --out          Uninstall/Unmerge packages" << std::endl;
@@ -158,15 +161,14 @@ int main() {
                     exit(1);
                 }
                 
-                std::vector< std::string > targets;
+                std::vector< std::string_view > targets;
                 bool ask = false, verbose = false, update = false, deep = false, stream_output = false;
                 std::string mode = "--in"; // Default to install mode for legacy compatibility
 
-                for (int i = 1; i < argc; ++i) {
-                    std::string arg = argv[i];
+                for (const auto& arg : str_args) {
                     if (arg == "--in" || arg == "--out") {
                         mode = arg;
-                    } else if (arg.rfind("--", 0) == 0) {
+                    } else if (arg.find("--") == 0) {
                         if (arg == "--ask") ask = true;
                         else if (arg == "--verbose") verbose = true;
                         else if (arg == "--update") update = true;
@@ -204,10 +206,9 @@ int main() {
                     for (const auto& pkg : targets) {
                         std::vector< std::string > local_matches;
                         
-                        // 1. Direct Category Match (e.g., app-misc/cmatrix)
                         if (pkg.find('/') != std::string::npos) {
                             try {
-                                Slipper::Dep::Atom target_atom(pkg);
+                                Slipper::Dep::Atom target_atom{std::string(pkg)};
                                 std::string eroot = "";
                                 auto vardb = std::make_shared< Slipper::Dbapi::VarDbApi >(eroot);
                                 auto installed_cpvs = vardb->cp_list(target_atom.getCp());
@@ -224,11 +225,9 @@ int main() {
                             } catch (const std::exception& e) {
                                 std::cout << "[!] Failed to parse qualified atom '" << pkg << "': " << e.what() << std::endl;
                             }
-                        } 
-                        // 2. Unqualified Package Name Scan (e.g., cmatrix or cmatrix-2.0)
-                        else {
-                            if (std::getenv("DEBUG")) {
-                                Logger::logDebug("slipperd", "Scanning VDB for unqualified package: " + pkg);
+                        } else {
+                            if (Logger::isDebugEnabled()) {
+                                Logger::logDebug("slipperd", "Scanning VDB for unqualified package: " + std::string(pkg));
                             }
                             
                             std::string vdb_root = "/var/db/pkg";
@@ -241,9 +240,7 @@ int main() {
                                         if (!pf_entry.is_directory()) continue;
                                         std::string pf = pf_entry.path().filename().string();
                                         
-                                        // Robust Match: Check if the folder name is exactly the package name, 
-                                        // or if the folder name starts with the package name followed by a hyphen.
-                                        if (pf == pkg || pf.find(pkg + "-") == 0) {
+                                        if (pf == pkg || pf.find(std::string(pkg) + "-") == 0) {
                                             local_matches.push_back(cat + "/" + pf);
                                         }
                                     }
@@ -251,11 +248,9 @@ int main() {
                             }
                         }
 
-                        // 3. Evaluate Match Results
                         if (local_matches.empty()) {
                             std::cout << "[!] \033[31mError:\033[0m No installed packages found matching '" << pkg << "'." << std::endl;
                         } else if (local_matches.size() > 1 && pkg.find('/') == std::string::npos) {
-                            // Multiple matches found for unqualified name (requires user clarification)
                             std::cout << "\n[!] Multiple packages found matching '" << pkg << "':" << std::endl;
                             for (const auto& match : local_matches) {
                                 std::cout << "    " << match << std::endl;
@@ -264,7 +259,6 @@ int main() {
                             close(client_sock);
                             exit(1);
                         } else {
-                            // Single exact match found (or multiple versions of a qualified atom)
                             for (const auto& match : local_matches) {
                                 unmerge_queue.push_back(match);
                             }
@@ -283,7 +277,7 @@ int main() {
                     }
 
                     if (ask) {
-                        if (std::getenv("DEBUG")) {
+                        if (Logger::isDebugEnabled()) {
                             Logger::logDebug("slipperd", "Prompting user for unmerge confirmation.");
                         }
                         
@@ -297,7 +291,10 @@ int main() {
                             std::string response(resp_buf);
                             if (!response.empty() && response.back() == '\n') response.pop_back();
 
-                            if (response != "Yes" && response != "yes" && response != "Y" && response != "y") {
+                            // BUG FIX: Strict positive whitelist to prevent the "peanuts" bypass
+                            if (response == "Yes" || response == "yes" || response == "Y" || response == "y") {
+                                Logger::logInfo("slipperd", "Slip out confirmed by user.");
+                            } else {
                                 Logger::logInfo("slipperd", "Slip out aborted by user.");
                                 close(client_sock);
                                 exit(0);
@@ -321,7 +318,7 @@ int main() {
                 // ------------------------------------------------------------------
                 // MERGE MODE (--in)
                 // ------------------------------------------------------------------
-                std::string target_package = targets[0]; 
+                std::string target_package(targets[0]); 
                 Logger::logInfo("slipperd", "Starting Slipper Package Management Daemon for target: " + target_package);
                 initialiseDaemon();
 
@@ -329,47 +326,32 @@ int main() {
                     std::vector< std::string > repo_paths;
                     Slipper::Repository::RepoConfigLoader repo_loader;
                     
-                    // 1. ALWAYS parse the system default repository configuration first (Gentoo Main Tree)
                     std::string default_repos_conf = "/usr/share/portage/config/repos.conf";
                     if (std::filesystem::exists(default_repos_conf)) {
                         if (std::filesystem::is_directory(default_repos_conf)) {
                             for (const auto& entry : std::filesystem::directory_iterator(default_repos_conf)) {
                                 if (entry.is_regular_file()) {
-                                    std::ifstream file(entry.path());
-                                    std::stringstream buffer;
-                                    buffer << file.rdbuf();
-                                    repo_loader.loadFromString(buffer.str());
+                                    repo_loader.loadFromFile(entry.path().string());
                                 }
                             }
                         } else {
-                            std::ifstream file(default_repos_conf);
-                            std::stringstream buffer;
-                            buffer << file.rdbuf();
-                            repo_loader.loadFromString(buffer.str());
+                            repo_loader.loadFromFile(default_repos_conf);
                         }
                     }
 
-                    // 2. Lay the user's custom overlays on top (e.g., Guru, local overlays)
                     std::string user_repos_conf = "/etc/portage/repos.conf";
                     if (std::filesystem::exists(user_repos_conf)) {
                         if (std::filesystem::is_directory(user_repos_conf)) {
                             for (const auto& entry : std::filesystem::directory_iterator(user_repos_conf)) {
                                 if (entry.is_regular_file()) {
-                                    std::ifstream file(entry.path());
-                                    std::stringstream buffer;
-                                    buffer << file.rdbuf();
-                                    repo_loader.loadFromString(buffer.str());
+                                    repo_loader.loadFromFile(entry.path().string());
                                 }
                             }
                         } else {
-                            std::ifstream file(user_repos_conf);
-                            std::stringstream buffer;
-                            buffer << file.rdbuf();
-                            repo_loader.loadFromString(buffer.str());
+                            repo_loader.loadFromFile(user_repos_conf);
                         }
                     }
 
-                    // 3. Extract the mapped paths from the combined loader
                     auto mapped_repos = repo_loader.getRepos();
                     for (const auto& pair : mapped_repos) {
                         std::string loc = pair.second.location.value_or("");
@@ -383,19 +365,16 @@ int main() {
                         repo_paths.push_back("/var/db/repos/gentoo");
                     }
 
-                    // --- NEW: Unqualified package resolution for Merge Mode (--in) ---
                     if (target_package != "@world" && target_package.find('/') == std::string::npos) {
-                        if (std::getenv("DEBUG")) {
+                        if (Logger::isDebugEnabled()) {
                             Logger::logDebug("slipperd", "Scanning repositories for unqualified package: " + target_package);
                         }
                         std::vector< std::string > repo_matches;
                         
-                        // Strip any leading modifiers (=, <, >, ~) and extract base name for folder matching
                         std::string search_name = target_package;
                         while (!search_name.empty() && (search_name[0] == '=' || search_name[0] == '<' || search_name[0] == '>' || search_name[0] == '~')) {
                             search_name.erase(0, 1);
                         }
-                        // Strip version numbers to find the raw repository directory name
                         for (size_t i = 0; i < search_name.length(); ++i) {
                             if (search_name[i] == '-' && i + 1 < search_name.length() && std::isdigit(search_name[i+1])) {
                                 search_name = search_name.substr(0, i);
@@ -410,12 +389,10 @@ int main() {
                                 if (!cat_entry.is_directory()) continue;
                                 std::string cat = cat_entry.path().filename().string();
                                 
-                                // Ignore standard Portage metadata directories
                                 if (cat == "metadata" || cat == "profiles" || cat == "eclass" || cat == "scripts") continue;
                                 
                                 std::string pkg_path = cat_entry.path().string() + "/" + search_name;
                                 if (std::filesystem::exists(pkg_path) && std::filesystem::is_directory(pkg_path)) {
-                                    // Construct the fully qualified name maintaining any original version modifiers
                                     std::string full_match = cat + "/" + target_package; 
                                     if (std::find(repo_matches.begin(), repo_matches.end(), full_match) == repo_matches.end()) {
                                         repo_matches.push_back(full_match);
@@ -437,13 +414,12 @@ int main() {
                             close(client_sock);
                             exit(1);
                         } else {
-                            if (std::getenv("DEBUG")) {
+                            if (Logger::isDebugEnabled()) {
                                 Logger::logDebug("slipperd", "Resolved unqualified package to: " + repo_matches[0]);
                             }
                             target_package = repo_matches[0];
                         }
                     }
-                    // -----------------------------------------------------------------
 
                     std::string eroot = ""; 
                     auto vardb = std::make_shared< Slipper::Dbapi::VarDbApi >(eroot);
@@ -470,7 +446,7 @@ int main() {
 
                     bool resolution_success = false;
 
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("slipperd", "Starting high-resolution timer for dependency graph calculation.");
                     }
                     auto start_time = std::chrono::high_resolution_clock::now();
@@ -503,7 +479,7 @@ int main() {
                     auto end_time = std::chrono::high_resolution_clock::now();
                     auto duration = std::chrono::duration_cast < std::chrono::milliseconds > (end_time - start_time).count();
                     
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("slipperd", "Timer stopped. Resolution completed in " + std::to_string(duration) + " ms.");
                     }
 
@@ -540,7 +516,14 @@ int main() {
                                     }
                                 }
 
-                                if (is_reinstall) {
+                                // Check if a pre-compiled binary exists for this exact CPV
+                                auto bin_matches = bindb->cp_list(cpv_atom.getCp());
+                                bool has_binpkg = (std::find(bin_matches.begin(), bin_matches.end(), cpv) != bin_matches.end());
+
+                                if (has_binpkg) {
+                                    status = " B "; // Binary merge
+                                    color = C_GREEN;
+                                } else if (is_reinstall) {
                                     status = " R ";
                                     color = C_YELLOW;
                                 } else if (is_upgrade) {
@@ -587,7 +570,7 @@ int main() {
                         }
                         
                         if (ask && !merge_queue.empty()) {
-                            if (std::getenv("DEBUG")) {
+                            if (Logger::isDebugEnabled()) {
                                 Logger::logDebug("slipperd", "Prompting user for confirmation via IPC token.");
                             }
                             
@@ -595,30 +578,23 @@ int main() {
                             std::cout.flush();
 
                             char resp_buf[256];
-                            // Wait for the client to write back to the socket
                             ssize_t r_bytes = read(client_sock, resp_buf, sizeof(resp_buf) - 1);
                             if (r_bytes > 0) {
                                 resp_buf[r_bytes] = '\0';
                                 std::string response(resp_buf);
                                 
-                                // Strip the trailing newline from the client response
                                 if (!response.empty() && response.back() == '\n') {
                                     response.pop_back();
                                 }
 
-                                if (std::getenv("DEBUG")) {
+                                if (Logger::isDebugEnabled()) {
                                     Logger::logDebug("slipperd", "Received IPC response: " + response);
                                 }
 
                                 if (response == "Yes" || response == "yes" || response == "Y" || response == "y") {
                                     Logger::logInfo("slipperd", "Initiating slip in process...");
-                                    
-                                    // Handoff to the C++ Execution Engine
                                     Slipper::Execution::Executor executor(repo_paths);
-                                    
-                                    // MODIFIED: Pass the stream_output boolean into the engine
                                     executor.slipQueue(merge_queue, stream_output);
-                                    
                                 } else {
                                     Logger::logInfo("slipperd", "Slip aborted by user.");
                                 }
@@ -642,6 +618,6 @@ int main() {
     }
 
     close(server_sock);
-    unlink(socket_path.c_str());
+    unlink(socket_path.data());
     return 0;
 }

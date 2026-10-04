@@ -14,7 +14,7 @@ EnvironmentContext::EnvironmentContext(
     std::shared_ptr< Config::LicenseManager > l
 ) : vardb(v), portdb(p), bindb(b), use_manager(u), mask_manager(m), keywords_manager(k), license_manager(l) {
     
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("EnvironmentContext::Constructor", "Initialising immutable environment context.");
         Logger::logDebug("EnvironmentContext::Constructor", "Database and Config APIs successfully mapped to daemon context.");
     }

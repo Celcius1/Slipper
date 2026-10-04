@@ -20,7 +20,7 @@ std::vector< std::string > ConfigLoader::tokenize(const std::string& str) {
 
 void ConfigLoader::processPath(const std::string& path_str, std::function< void(const std::string&) > line_processor) {
     if (!std::filesystem::exists(path_str)) {
-        if (std::getenv("DEBUG")) {
+        if (Logger::isDebugEnabled()) {
             Logger::logDebug("ConfigLoader", "Path does not exist, skipping: " + path_str);
         }
         return;
@@ -60,7 +60,7 @@ void ConfigLoader::loadSystemConfig(
     std::shared_ptr< LicenseManager > lic_mgr,
     const std::string& config_root
 ) {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("ConfigLoader", "Parsing system configuration from: " + config_root);
     }
 
@@ -75,7 +75,7 @@ void ConfigLoader::loadSystemConfig(
         }
     });
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("ConfigLoader", "Pre-loaded license groups from repository profiles.");
     }
 
@@ -146,7 +146,7 @@ void ConfigLoader::loadSystemConfig(
         }
     });
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("ConfigLoader", "System configuration parsing complete.");
     }
 }

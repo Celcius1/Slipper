@@ -1,15 +1,18 @@
 #include "../../include/execution/Executor.hpp"
 #include "../../include/Logger.hpp"
 #include "../../include/dep/Atom.hpp"
-#include "iostream"
-#include "filesystem"
-#include "cstdlib"
-#include "unistd.h"
-#include "sys/wait.h"
-#include "fcntl.h"
-#include "fstream"
-#include "sstream"
-#include "regex"
+#include <iostream>
+#include <filesystem>
+#include <cstdlib>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <fstream>
+#include <sstream>
+#include <regex>
+#include <cerrno>
+#include <cstring>
+#include <unistd.h>
 
 using namespace Slipper::Execution;
 
@@ -70,9 +73,15 @@ std::vector< std::pair< std::string, std::string > > Executor::extractSrcUri(con
     return uris;
 }
 
-bool Executor::fetchSources(const std::vector< std::pair< std::string, std::string > >& uris) const {
+bool Executor::fetchSources(const std::vector<std::pair<std::string, std::string>>& uris) const {
     std::string distdir = "/var/cache/distfiles";
-    std::filesystem::create_directories(distdir);
+    std::error_code ec;
+    
+    std::filesystem::create_directories(distdir, ec);
+    if (ec) {
+        Logger::logError("Executor::fetchSources", "Failed to create distdir: " + ec.message());
+        return false;
+    }
     
     for (const auto& item : uris) {
         std::string url = item.first;
@@ -80,18 +89,34 @@ bool Executor::fetchSources(const std::vector< std::pair< std::string, std::stri
         std::string dest = distdir + "/" + filename;
         
         if (std::filesystem::exists(dest)) {
-            if (std::getenv("DEBUG")) {
-                Logger::logDebug("Executor", "Distfile already exists: " + dest);
+            if (Logger::isDebugEnabled()) {
+                Logger::logDebug("Executor::fetchSources", "Distfile already exists: " + dest);
             }
             continue;
         }
         
         std::cout << ">>> Downloading " << filename << "..." << std::endl;
-        std::string cmd = "wget -q --show-progress -O " + dest + " " + url;
-        int ret = system(cmd.c_str());
-        if (ret != 0) {
-            Logger::logError("Executor", "Failed to fetch: " + url);
+        
+        pid_t pid = fork();
+        if (pid == -1) {
+            Logger::logError("Executor::fetchSources", std::string("Fork failed: ") + strerror(errno));
             return false;
+        } else if (pid == 0) {
+            // Child process: Execute wget directly, bypassing the shell interpreter
+            execlp("wget", "wget", "-q", "--show-progress", "-O", dest.c_str(), url.c_str(), static_cast< char* >(NULL));
+            
+            // If execlp returns, the system call failed entirely
+            Logger::logError("Executor::fetchSources", std::string("execlp failed: ") + strerror(errno));
+            exit(1);
+        } else {
+            // Parent process: Wait securely for the child to finish
+            int status = 0;
+            waitpid(pid, &status, 0);
+            
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                Logger::logError("Executor::fetchSources", "Failed to fetch: " + url + " (Exit status: " + std::to_string(WEXITSTATUS(status)) + ")");
+                return false;
+            }
         }
     }
     return true;
@@ -117,7 +142,7 @@ bool Executor::filterEnvironment(const std::string& build_dir) const {
     std::regex close_quote_re(R"((\\"|"|')\s*$)");
     std::smatch match;
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::filterEnvironment", "Starting environment filter pass for: " + build_dir);
     }
 
@@ -127,7 +152,7 @@ bool Executor::filterEnvironment(const std::string& build_dir) const {
             out << line << "\n";
             if (std::regex_search(line, match, close_quote_re)) {
                 if (match.str(1)[0] == multi_line_quote) {
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("Executor::filterEnvironment", "Closed multi-line quote block.");
                     }
                     multi_line_quote = 0;
@@ -138,7 +163,7 @@ bool Executor::filterEnvironment(const std::string& build_dir) const {
 
         // Drop read-only internal Bash arrays and variables completely
         if (std::regex_match(line, match, internal_vars_re)) {
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Executor::filterEnvironment", "Stripped protected internal bash variable.");
             }
             continue;
@@ -262,12 +287,12 @@ bool Executor::executeEbuildPhases(const std::string& ebuild_path, const std::st
             int status = 0; // Initialize to prevent garbage memory evaluation
             waitpid(pid, &status, 0);
             
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Executor::executeEbuildPhases", "Child process waitpid returned. Status: " + std::to_string(status));
             }
             
             if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-                if (std::getenv("DEBUG")) {
+                if (Logger::isDebugEnabled()) {
                     Logger::logError("Executor::executeEbuildPhases", "Ebuild phase execution failed with non-zero status.");
                 }
                 return false; 
@@ -301,27 +326,46 @@ bool Executor::mergeImage(const std::string& cpv, const std::string& ebuild_path
     
     std::string image_dir = "/var/tmp/slipper/" + cpv + "/image";
     std::string vdb_dir = "/var/db/pkg/" + cpv;
+    std::error_code ec;
 
-    // 1. Establish the VDB Entry
-    std::filesystem::create_directories(vdb_dir);
+    // 1. Establish the VDB Entry securely
+    std::filesystem::create_directories(vdb_dir, ec);
+    if (ec) {
+        Logger::logError("Executor::mergeImage", "Failed to create VDB directory: " + ec.message());
+        return false;
+    }
     std::ofstream contents_file(vdb_dir + "/CONTENTS");
 
-    // 2. Recursively traverse the Image Directory
+    // 2. Recursively traverse the Image Directory with symlink defenses
     if (std::filesystem::exists(image_dir)) {
         for (auto const& dir_entry : std::filesystem::recursive_directory_iterator(image_dir)) {
-            // Calculate absolute target path on the live system
             std::string relative_path = dir_entry.path().string().substr(image_dir.length());
             if (relative_path.empty()) continue;
-            std::string target_path = relative_path;
             
-            // Generate standard copy options (overwrite + preserve symlinks)
+            // The absolute target path on the live system
+            std::string target_path = relative_path; 
+            
+            // SECURITY: Prevent TOCTOU symlink traversal attacks on the live system.
+            // If the target path exists and is a symlink, writing to it could traverse outside the intended directory.
+            if (std::filesystem::exists(target_path, ec) && std::filesystem::is_symlink(target_path, ec)) {
+                Logger::logError("Executor::mergeImage", "Security violation: Target path is an existing host symlink. Aborting merge to prevent path traversal: " + target_path);
+                return false; 
+            }
+
             auto copy_opts = std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::copy_symlinks;
 
-            if (dir_entry.is_directory()) {
-                std::filesystem::create_directories(target_path);
+            if (dir_entry.is_symlink(ec)) {
+                std::filesystem::copy(dir_entry.path(), target_path, copy_opts, ec);
+                contents_file << "sym " << target_path << " -> " << std::filesystem::read_symlink(dir_entry.path(), ec).string() << "\n";
+            } else if (dir_entry.is_directory(ec)) {
+                std::filesystem::create_directories(target_path, ec);
                 contents_file << "dir " << target_path << "\n";
             } else {
-                std::filesystem::copy(dir_entry.path(), target_path, copy_opts);
+                std::filesystem::copy(dir_entry.path(), target_path, copy_opts, ec);
+                if (ec) {
+                    Logger::logError("Executor::mergeImage", "Failed to copy file to live system: " + target_path);
+                    return false;
+                }
                 contents_file << "obj " << target_path << "\n";
             }
         }
@@ -329,7 +373,7 @@ bool Executor::mergeImage(const std::string& cpv, const std::string& ebuild_path
 
     // 3. Stage the Metadata needed by Slipper and Portage
     std::string ebuild_name = std::filesystem::path(ebuild_path).filename().string();
-    std::filesystem::copy(ebuild_path, vdb_dir + "/" + ebuild_name, std::filesystem::copy_options::overwrite_existing);
+    std::filesystem::copy(ebuild_path, vdb_dir + "/" + ebuild_name, std::filesystem::copy_options::overwrite_existing, ec);
 
     std::ofstream(vdb_dir + "/PF") << pf << "\n";
     std::ofstream(vdb_dir + "/CATEGORY") << category << "\n";
@@ -362,7 +406,7 @@ bool Executor::slipQueue(const std::vector< std::string >& merge_queue, bool str
         std::cout << ">>> Slipping in " << cpv << "..." << std::endl;
         
         // NEW: Guarantee a clean slate by purging any stale state from previous crashes
-        if (std::getenv("DEBUG")) {
+        if (Logger::isDebugEnabled()) {
             Logger::logDebug("Executor::slipQueue", "Purging stale build directory for " + cpv);
         }
         clean(cpv);
@@ -388,7 +432,7 @@ bool Executor::slipQueue(const std::vector< std::string >& merge_queue, bool str
             std::cout << " * Updating dynamic linker cache (ldconfig)..." << std::endl;
         }
 
-        if (std::getenv("DEBUG")) {
+        if (Logger::isDebugEnabled()) {
             Logger::logDebug("Executor::slipQueue", "Updating dynamic linker cache via ldconfig.");
         }
         system("ldconfig");
@@ -407,7 +451,7 @@ bool Executor::slipQueue(const std::vector< std::string >& merge_queue, bool str
 
 // --- NEW: Slipper Unmerge Engine ---
 bool Executor::slipOut(const std::string& cpv) {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::slipOut", "Initialising uninstall routine for: " + cpv);
     }
 
@@ -425,7 +469,7 @@ bool Executor::slipOut(const std::string& cpv) {
         return false;
     }
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::slipOut", "Successfully located CONTENTS file: " + contents_file.string());
     }
 
@@ -464,7 +508,7 @@ bool Executor::slipOut(const std::string& cpv) {
         }
     }
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::slipOut", "Commencing file and symlink removal...");
     }
     
@@ -472,13 +516,13 @@ bool Executor::slipOut(const std::string& cpv) {
         std::error_code ec;
         if (std::filesystem::symlink_status(f, ec).type() != std::filesystem::file_type::not_found) {
             std::filesystem::remove(f, ec);
-            if (ec && std::getenv("DEBUG")) {
+            if (ec && Logger::isDebugEnabled()) {
                 Logger::logError("Executor::slipOut", "Failed to remove " + f.string() + ": " + ec.message());
             }
         }
     }
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::slipOut", "Sorting directories for safe bottom-up removal...");
     }
     std::sort(dirs_to_remove.begin(), dirs_to_remove.end(), [](const std::filesystem::path& a, const std::filesystem::path& b) {
@@ -492,14 +536,14 @@ bool Executor::slipOut(const std::string& cpv) {
         }
     }
 
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::slipOut", "Erasing package Virtual Database (VDB) entry: " + vdb_path.string());
     }
     std::error_code ec;
     std::filesystem::remove_all(vdb_path, ec);
 
     std::cout << " * Updating dynamic linker cache (ldconfig)..." << std::endl;
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::slipOut", "Updating dynamic linker cache via ldconfig.");
     }
     system("ldconfig");

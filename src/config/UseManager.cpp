@@ -15,7 +15,7 @@ void UseManager::addPackageUse(const std::string& atom_str, const std::vector< s
 }
 
 std::unordered_set< std::string > UseManager::getPUSE(const Slipper::Dep::Atom& pkg) const {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("UseManager::getPUSE", "Resolving final USE flags for: " + pkg.getRawString());
     }
     
@@ -25,16 +25,16 @@ std::unordered_set< std::string > UseManager::getPUSE(const Slipper::Dep::Atom& 
     // 1. Apply global USE flags from make.conf (*/*)
     auto global_it = puse_dict.find("*/*");
     if (global_it != puse_dict.end()) {
-        if (std::getenv("DEBUG")) Logger::logDebug("UseManager::getPUSE", "Applying global */* USE flags.");
+        if (Logger::isDebugEnabled()) Logger::logDebug("UseManager::getPUSE", "Applying global */* USE flags.");
         for (const auto& entry : global_it->second) {
             for (const auto& flag : entry.second) {
                 if (!flag.empty() && flag[0] == '-') {
                     std::string positive_flag = flag.substr(1);
                     resolved_flags.erase(positive_flag);
-                    if (std::getenv("DEBUG")) Logger::logDebug("UseManager::getPUSE", "Removed global flag: " + positive_flag);
+                    if (Logger::isDebugEnabled()) Logger::logDebug("UseManager::getPUSE", "Removed global flag: " + positive_flag);
                 } else {
                     resolved_flags.insert(flag);
-                    if (std::getenv("DEBUG")) Logger::logDebug("UseManager::getPUSE", "Added global flag: " + flag);
+                    if (Logger::isDebugEnabled()) Logger::logDebug("UseManager::getPUSE", "Added global flag: " + flag);
                 }
             }
         }
@@ -46,24 +46,24 @@ std::unordered_set< std::string > UseManager::getPUSE(const Slipper::Dep::Atom& 
         for (const auto& entry : it->second) {
             const Slipper::Dep::Atom& config_atom = entry.first;
             if (config_atom.getCp() == cp) {
-                if (std::getenv("DEBUG")) Logger::logDebug("UseManager::getPUSE", "Applying flags from config atom: " + config_atom.getRawString());
+                if (Logger::isDebugEnabled()) Logger::logDebug("UseManager::getPUSE", "Applying flags from config atom: " + config_atom.getRawString());
                 for (const auto& flag : entry.second) {
                     if (!flag.empty() && flag[0] == '-') {
                         std::string positive_flag = flag.substr(1);
                         resolved_flags.erase(positive_flag);
-                        if (std::getenv("DEBUG")) Logger::logDebug("UseManager::getPUSE", "Removed flag: " + positive_flag);
+                        if (Logger::isDebugEnabled()) Logger::logDebug("UseManager::getPUSE", "Removed flag: " + positive_flag);
                     } else {
                         resolved_flags.insert(flag);
-                        if (std::getenv("DEBUG")) Logger::logDebug("UseManager::getPUSE", "Added flag: " + flag);
+                        if (Logger::isDebugEnabled()) Logger::logDebug("UseManager::getPUSE", "Added flag: " + flag);
                     }
                 }
             }
         }
     } else {
-        if (std::getenv("DEBUG")) Logger::logDebug("UseManager::getPUSE", "No package.use overrides found for CP: " + cp);
+        if (Logger::isDebugEnabled()) Logger::logDebug("UseManager::getPUSE", "No package.use overrides found for CP: " + cp);
     }
     
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("UseManager::getPUSE", "Resolution complete. Total active flags: " + std::to_string(resolved_flags.size()));
     }
     return resolved_flags;

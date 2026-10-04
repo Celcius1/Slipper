@@ -28,7 +28,7 @@ std::vector< std::string > LicenseManager::expandLicenseToken(const std::string&
             if (seen_groups.find(current_token) != seen_groups.end()) return;
             seen_groups.insert(current_token);
 
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("LicenseManager::expandLicenseToken", "Expanding group token: " + current_token);
             }
             
@@ -38,7 +38,7 @@ std::vector< std::string > LicenseManager::expandLicenseToken(const std::string&
                     expand_recursive(lic);
                 }
             } else {
-                if (std::getenv("DEBUG")) {
+                if (Logger::isDebugEnabled()) {
                     Logger::logDebug("LicenseManager::expandLicenseToken", "Undefined license group: " + current_token);
                 }
                 expanded.push_back(current_token); 
@@ -53,7 +53,7 @@ std::vector< std::string > LicenseManager::expandLicenseToken(const std::string&
 }
 
 std::unordered_set< std::string > LicenseManager::getAcceptedLicenses(const Slipper::Dep::Atom& pkg) const {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("LicenseManager::getAcceptedLicenses", "Resolving accepted licenses for: " + pkg.getRawString());
     }
     
@@ -63,7 +63,7 @@ std::unordered_set< std::string > LicenseManager::getAcceptedLicenses(const Slip
     // 1. Apply global licenses from make.conf (*/*)
     auto global_it = plicense_dict.find("*/*");
     if (global_it != plicense_dict.end()) {
-        if (std::getenv("DEBUG")) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Applying global */* licenses.");
+        if (Logger::isDebugEnabled()) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Applying global */* licenses.");
         for (const auto& entry : global_it->second) {
             for (const auto& lic_token : entry.second) {
                 auto expanded = expandLicenseToken(lic_token);
@@ -71,10 +71,10 @@ std::unordered_set< std::string > LicenseManager::getAcceptedLicenses(const Slip
                     if (!ex_lic.empty() && ex_lic[0] == '-') {
                         std::string positive_lic = ex_lic.substr(1);
                         resolved_licenses.erase(positive_lic);
-                        if (std::getenv("DEBUG")) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Removed global license: " + positive_lic);
+                        if (Logger::isDebugEnabled()) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Removed global license: " + positive_lic);
                     } else {
                         resolved_licenses.insert(ex_lic);
-                        if (std::getenv("DEBUG")) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Added global license: " + ex_lic);
+                        if (Logger::isDebugEnabled()) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Added global license: " + ex_lic);
                     }
                 }
             }
@@ -87,27 +87,27 @@ std::unordered_set< std::string > LicenseManager::getAcceptedLicenses(const Slip
         for (const auto& entry : it->second) {
             const Slipper::Dep::Atom& config_atom = entry.first;
             if (config_atom.getCp() == cp) {
-                if (std::getenv("DEBUG")) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Applying licenses from config atom: " + config_atom.getRawString());
+                if (Logger::isDebugEnabled()) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Applying licenses from config atom: " + config_atom.getRawString());
                 for (const auto& lic_token : entry.second) {
                     auto expanded = expandLicenseToken(lic_token);
                     for (const auto& ex_lic : expanded) {
                         if (!ex_lic.empty() && ex_lic[0] == '-') {
                             std::string positive_lic = ex_lic.substr(1);
                             resolved_licenses.erase(positive_lic);
-                            if (std::getenv("DEBUG")) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Removed license: " + positive_lic);
+                            if (Logger::isDebugEnabled()) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Removed license: " + positive_lic);
                         } else {
                             resolved_licenses.insert(ex_lic);
-                            if (std::getenv("DEBUG")) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Added license: " + ex_lic);
+                            if (Logger::isDebugEnabled()) Logger::logDebug("LicenseManager::getAcceptedLicenses", "Added license: " + ex_lic);
                         }
                     }
                 }
             }
         }
     } else {
-        if (std::getenv("DEBUG")) Logger::logDebug("LicenseManager::getAcceptedLicenses", "No package.license overrides found for CP: " + cp);
+        if (Logger::isDebugEnabled()) Logger::logDebug("LicenseManager::getAcceptedLicenses", "No package.license overrides found for CP: " + cp);
     }
     
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("LicenseManager::getAcceptedLicenses", "Resolution complete. Total accepted licenses: " + std::to_string(resolved_licenses.size()));
     }
     return resolved_licenses;

@@ -9,7 +9,7 @@ namespace Repository {
 class RepoConfigLoader {
 public:
     // Parses an INI-formatted string or file stream
-    void loadFromString(const std::string& config_content);
+    void loadFromFile(const std::string& file_path);
     
     // Retrieve the loaded repositories
     const std::map< std::string, RepoConfig >& getRepos() const { return repos; }

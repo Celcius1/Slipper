@@ -14,7 +14,7 @@ void KeywordsManager::addKeyword(const std::string& atom_str, const std::vector<
 }
 
 std::vector< std::string > KeywordsManager::getKeywords(const Slipper::Dep::Atom& pkg) const {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("KeywordsManager::getKeywords", "Resolving accepted keywords for: " + pkg.getRawString());
     }
     
@@ -24,11 +24,11 @@ std::vector< std::string > KeywordsManager::getKeywords(const Slipper::Dep::Atom
     // 1. Apply global keywords from make.conf (*/*)
     auto global_it = pkeywords_dict.find("*/*");
     if (global_it != pkeywords_dict.end()) {
-        if (std::getenv("DEBUG")) Logger::logDebug("KeywordsManager::getKeywords", "Applying global */* keywords.");
+        if (Logger::isDebugEnabled()) Logger::logDebug("KeywordsManager::getKeywords", "Applying global */* keywords.");
         for (const auto& entry : global_it->second) {
             for (const auto& kw : entry.second) {
                 resolved_keywords.push_back(kw);
-                if (std::getenv("DEBUG")) Logger::logDebug("KeywordsManager::getKeywords", "Added global keyword: " + kw);
+                if (Logger::isDebugEnabled()) Logger::logDebug("KeywordsManager::getKeywords", "Added global keyword: " + kw);
             }
         }
     }
@@ -53,23 +53,23 @@ std::vector< std::string > KeywordsManager::getKeywords(const Slipper::Dep::Atom
         }
 
         if (match) {
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("KeywordsManager::getKeywords", "Applying keywords from config atom: " + config_atom.getRawString());
             }
             
             for (const auto& kw : entry.second) {
                 resolved_keywords.push_back(kw);
-                if (std::getenv("DEBUG")) {
+                if (Logger::isDebugEnabled()) {
                     Logger::logDebug("KeywordsManager::getKeywords", "Added keyword: " + kw);
                 }
             }
         }
     }
     } else {
-        if (std::getenv("DEBUG")) Logger::logDebug("KeywordsManager::getKeywords", "No package.accept_keywords overrides found for CP: " + cp);
+        if (Logger::isDebugEnabled()) Logger::logDebug("KeywordsManager::getKeywords", "No package.accept_keywords overrides found for CP: " + cp);
     }
     
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("KeywordsManager::getKeywords", "Resolution complete. Total accepted keywords: " + std::to_string(resolved_keywords.size()));
     }
     return resolved_keywords;

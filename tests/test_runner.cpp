@@ -107,7 +107,7 @@ priority = 50
     Logger::logInfo("testRepoConfigParser", "Testing RepoConfigLoader with mock repos.conf data");
     try {
         Slipper::Repository::RepoConfigLoader loader;
-        loader.loadFromString(mock_repos_conf);
+        loader.loadFromFile(mock_repos_conf);
         auto repos = loader.getRepos();
         std::cout << "Successfully parsed " << repos.size() << " repository sections:" << std::endl;
         for (const auto& pair : repos) {

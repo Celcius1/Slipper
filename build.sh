@@ -19,5 +19,5 @@ echo "--- Compiling Slipper ---"
 make -j$(nproc)
 
 echo "--- Compilation Complete ---"
-echo "You can now run the binary with your debug tracing active by executing:"
-echo "DEBUG=1 ./slipper"
+echo "You can now run the binary with your debug tracing active by setting:"
+echo "export DEBUG="1" in /etc/conf.d/slipperd"

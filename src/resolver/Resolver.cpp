@@ -8,13 +8,13 @@
 using namespace Slipper::Resolver;
 
 Resolver::Resolver(std::shared_ptr< EnvironmentContext > env) : env_context(env) {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Resolver::Constructor", "Resolver engine instantiated with immutable environment context.");
     }
 }
 
 bool Resolver::resolve(ResolutionState& state, const Slipper::Dep::Atom& root_atom) {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Resolver::resolve", "Kicking off dependency resolution for: " + root_atom.getRawString());
     }
     state.queueDependency(root_atom);
@@ -23,7 +23,7 @@ bool Resolver::resolve(ResolutionState& state, const Slipper::Dep::Atom& root_at
 
 // Add this directly below the existing resolve(ResolutionState&, const Slipper::Dep::Atom&) function:
 bool Resolver::resolve(ResolutionState& state, const std::vector< Slipper::Dep::Atom >& root_atoms) {
-    if (std::getenv("DEBUG")) {
+    if (Logger::isDebugEnabled()) {
         Logger::logDebug("Resolver::resolve", "Kicking off dependency resolution for multiple targets (@world).");
     }
     
@@ -45,7 +45,7 @@ bool Resolver::createGraph(ResolutionState& state) {
             Slipper::Dep::Atom current_atom = state.dep_stack.top();
             state.dep_stack.pop();
 
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Resolver::createGraph", "Evaluating dependencies for: " + current_atom.getRawString());
             }
 
@@ -68,14 +68,14 @@ bool Resolver::createGraph(ResolutionState& state) {
             
             auto parsed_deps = parseDependencies(combined_deps, active_use);
 
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Resolver::createGraph", "Queuing " + std::to_string(parsed_deps.mandatory.size()) + " mandatory and " + std::to_string(parsed_deps.disjunctive.size()) + " OR blocks for " + target_cpv);
             }
 
             // Queue mandatory dependencies
             for (const auto& dep : parsed_deps.mandatory) {
                 if (dep.getBlocker() != Slipper::Dep::Blocker::None) {
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("Resolver::createGraph", "Blocker segregated: " + dep.getRawString());
                     }
                     continue;
@@ -83,7 +83,7 @@ bool Resolver::createGraph(ResolutionState& state) {
 
                 auto installed = env_context->vardb->cp_list(dep.getCp());
                 if (!installed.empty()) {
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("Resolver::createGraph", "Dependency satisfied by VDB (installed): " + dep.getCp());
                     }
                     continue;
@@ -103,7 +103,7 @@ bool Resolver::createGraph(ResolutionState& state) {
             auto or_group = state.dep_disjunctive_stack.top();
             state.dep_disjunctive_stack.pop();
             
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Resolver::createGraph", "Evaluating OR block with " + std::to_string(or_group.size()) + " options.");
             }
 
@@ -112,7 +112,7 @@ bool Resolver::createGraph(ResolutionState& state) {
             // Priority 1: Check if any option is already installed in the VDB
             for (const auto& opt : or_group) {
                 if (!env_context->vardb->cp_list(opt.getCp()).empty()) {
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("Resolver::createGraph", "OR block satisfied by installed package: " + opt.getCp());
                     }
                     satisfied = true;
@@ -124,7 +124,7 @@ bool Resolver::createGraph(ResolutionState& state) {
             // Priority 2: Check if any option is already selected in the current graph
             for (const auto& opt : or_group) {
                 if (!state.tracker.match(opt).empty()) {
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("Resolver::createGraph", "OR block satisfied by tracked package: " + opt.getCp());
                     }
                     satisfied = true;
@@ -137,7 +137,7 @@ bool Resolver::createGraph(ResolutionState& state) {
             for (const auto& opt : or_group) {
                 std::string target_cpv = getBestVisible(opt);
                 if (!target_cpv.empty()) {
-                    if (std::getenv("DEBUG")) {
+                    if (Logger::isDebugEnabled()) {
                         Logger::logDebug("Resolver::createGraph", "OR block defaulting to first available option: " + opt.getRawString());
                     }
                     state.queueDependency(opt); // Queue it back to the primary stack
@@ -181,7 +181,7 @@ std::string Resolver::getBestVisible(const Slipper::Dep::Atom& atom) const {
         if (!explicit_live_request) {
             std::string ver = cpv_atom.getVersion().value_or("");
             if (ver == "9999" || ver == "99999999") {
-                if (std::getenv("DEBUG")) {
+                if (Logger::isDebugEnabled()) {
                     Logger::logDebug("Resolver::getBestVisible", "Skipped live ebuild during standard resolution: " + cpv);
                 }
                 continue;
@@ -191,7 +191,7 @@ std::string Resolver::getBestVisible(const Slipper::Dep::Atom& atom) const {
         // B. package.mask Filter
         auto mask_result = env_context->mask_manager->getMaskAtom(cpv_atom);
         if (mask_result.has_value()) {
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Resolver::getBestVisible", "Dropped masked package: " + cpv + " (Masked by: " + mask_result.value().getRawString() + ")");
             }
             continue;
@@ -256,7 +256,7 @@ std::string Resolver::getBestVisible(const Slipper::Dep::Atom& atom) const {
         }
 
         if (!keyword_accepted) {
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Resolver::getBestVisible", "Dropped architecture-masked package: " + cpv + " (Ebuild KEYWORDS: " + ebuild_keywords + ")");
             }
             continue;
@@ -289,7 +289,7 @@ std::string Resolver::getBestVisible(const Slipper::Dep::Atom& atom) const {
         }
 
         if (!license_accepted) {
-            if (std::getenv("DEBUG")) {
+            if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Resolver::getBestVisible", "Dropped license-masked package: " + cpv + " (Ebuild LICENSE: " + ebuild_license + ")");
             }
             continue;
@@ -411,7 +411,7 @@ ParsedDeps Resolver::parseDependencies(const std::string& dep_string, const std:
                     result.mandatory.emplace_back(token);
                 }
             } catch (...) {
-                if (std::getenv("DEBUG")) {
+                if (Logger::isDebugEnabled()) {
                     Logger::logDebug("Resolver::parseDependencies", "Ignored malformed atom token: " + token);
                 }
             }

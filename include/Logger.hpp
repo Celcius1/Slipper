@@ -1,13 +1,22 @@
 #pragma once
-#include "iostream"
-#include "cstdlib"
-#include "string"
-#include "fstream"
-#include "chrono"
-#include "ctime"
+#include <iostream>
+#include <cstdlib>
+#include <string>
+#include <fstream>
+#include <chrono>
+#include <ctime>
 
 class Logger {
 private:
+    // Evaluate the environment variable exactly once at binary load time
+    static inline const bool IS_DEBUG = []() {
+        if (const char* env_p = std::getenv("DEBUG")) {
+            std::string debugFlag(env_p);
+            return debugFlag == "1" || debugFlag == "true" || debugFlag == "TRUE";
+        }
+        return false;
+    }();
+
     static inline std::string getCurrentTime() {
         auto now = std::chrono::system_clock::now();
         std::time_t now_time = std::chrono::system_clock::to_time_t(now);
@@ -25,23 +34,8 @@ private:
     }
 
 public:
-    // Evaluates if the DEBUG environment variable is set to 1 or true.
-    // This perfectly hooks into Docker's environment variable settings.
     static inline bool isDebugEnabled() {
-        if (const char* env_p = std::getenv("DEBUG")) {
-            std::string debugFlag(env_p);
-            return debugFlag == "1" || debugFlag == "true" || debugFlag == "TRUE";
-        }
-        return false;
-    }
-
-    // Use this for step-by-step routine tracking.
-    // It will only output to the console and file if the DEBUG flag is active.
-    static inline void logDebug(const std::string& routine, const std::string& message) {
-        if (isDebugEnabled()) {
-            std::cout << "[DEBUG] [" << routine << "] " << message << std::endl;
-            writeToFile("DEBUG", routine, message);
-        }
+        return IS_DEBUG;
     }
 
     // Standard output for major daemon lifecycle events (always visible).
@@ -53,5 +47,14 @@ public:
     static inline void logError(const std::string& routine, const std::string& message) {
         std::cerr << "\033[1;31m[ERROR] [" << routine << "] " << message << "\033[0m" << std::endl;
         writeToFile("ERROR", routine, message);
+    }
+
+    // Use this for step-by-step routine tracking.
+    // It evaluates against the static constant, entirely bypassing glibc environment locks.
+    static inline void logDebug(const std::string& routine, const std::string& message) {
+        if (IS_DEBUG) {
+            std::cout << "[DEBUG] [" << routine << "] " << message << std::endl;
+            writeToFile("DEBUG", routine, message);
+        }
     }
 };

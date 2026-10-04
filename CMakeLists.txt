@@ -1,10 +1,11 @@
-cmake_minimum_required(VERSION 3.12)
-project(SlipperDaemon)
+cmake_minimum_required(VERSION 3.23)
+project(SlipperDaemon CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-include_directories(include)
+# Include standard GNU install directories to dynamically respect Gentoo prefixes (e.g., DESTDIR, /usr)
+include(GNUInstallDirs)
 
 # Recursively find all .cpp files and store them in the ALL_SRC_FILES variable.
 file(GLOB_RECURSE ALL_SRC_FILES CONFIGURE_DEPENDS "src/*.cpp")
@@ -23,3 +24,12 @@ add_executable(slip src/cli/slip.cpp)
 
 # 3. Standalone Test Suite
 add_executable(slipper_tests tests/test_runner.cpp ${CORE_SRC_FILES})
+
+# Modern CMake: Bind the include directories directly to the targets using FILE_SET
+target_sources(slipperd PUBLIC FILE_SET HEADERS BASE_DIRS include)
+target_sources(slip PUBLIC FILE_SET HEADERS BASE_DIRS include)
+target_sources(slipper_tests PUBLIC FILE_SET HEADERS BASE_DIRS include)
+
+# Native Install Targets mapping to standard Linux paths instead of hardcoded /usr/local/
+install(TARGETS slipperd DESTINATION ${CMAKE_INSTALL_SBINDIR})
+install(TARGETS slip DESTINATION ${CMAKE_INSTALL_BINDIR})

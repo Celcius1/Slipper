@@ -1,8 +1,8 @@
 #include "../../include/repository/RepoConfigLoader.hpp"
 #include "../../include/Logger.hpp"
-#include "sstream"
-#include "algorithm"
-#include "cctype"
+#include <sstream>
+#include <algorithm>
+#include <cctype>
 
 using namespace Slipper::Repository;
 
@@ -12,14 +12,21 @@ std::string RepoConfigLoader::trim(const std::string& str) {
     return (start < end) ? std::string(start, end) : "";
 }
 
-void RepoConfigLoader::loadFromString(const std::string& config_content) {
-    Logger::logDebug("RepoConfigLoader::loadFromString", "Parsing repos.conf content...");
+void RepoConfigLoader::loadFromFile(const std::string& file_path) {
+    if (Logger::isDebugEnabled()) {
+        Logger::logDebug("RepoConfigLoader::loadFromFile", "Parsing repos.conf content from: " + file_path);
+    }
 
-    std::stringstream ss(config_content);
+    std::ifstream file(file_path);
+    if (!file.is_open()) {
+        Logger::logError("RepoConfigLoader::loadFromFile", "Failed to open repository config: " + file_path);
+        return;
+    }
+
     std::string line;
     std::string current_section = "";
 
-    while (std::getline(ss, line)) {
+    while (std::getline(file, line)) {
         line = trim(line);
         
         // Skip empty lines and comments
@@ -32,7 +39,9 @@ void RepoConfigLoader::loadFromString(const std::string& config_content) {
             current_section = trim(line.substr(1, line.size() - 2));
             if (repos.find(current_section) == repos.end()) {
                 repos[current_section] = RepoConfig(current_section);
-                Logger::logDebug("RepoConfigLoader", "Discovered repository section: [" + current_section + "]");
+                if (Logger::isDebugEnabled()) {
+                    Logger::logDebug("RepoConfigLoader", "Discovered repository section: [" + current_section + "]");
+                }
             }
             continue;
         }
@@ -53,12 +62,12 @@ void RepoConfigLoader::loadFromString(const std::string& config_content) {
                 repo.sync_uri = value;
             } else if (key == "priority") {
                 try { repo.priority = std::stoi(value); } 
-                catch (...) { Logger::logDebug("RepoConfigLoader", "Invalid priority value: " + value); }
+                catch (...) { 
+                    if (Logger::isDebugEnabled()) Logger::logDebug("RepoConfigLoader", "Invalid priority value: " + value); 
+                }
             } else if (key == "auto-sync") {
                 repo.auto_sync = (value != "no" && value != "false");
             }
-            
-            Logger::logDebug("RepoConfigLoader", "Mapped key [" + key + "] = [" + value + "] to repo: " + current_section);
         }
     }
 }
