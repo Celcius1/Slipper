@@ -207,8 +207,13 @@ std::string Resolver::getBestVisible(const Slipper::Dep::Atom& atom) const {
         // We must ensure the ebuild's keywords match the user's ACCEPT_KEYWORDS.
         bool keyword_accepted = false;
         
-        // Get accepted keywords for this specific package (falls back to */* global if no package.accept_keywords exists)
+        // Get accepted keywords for this specific package
         auto accepted_keywords = env_context->keywords_manager->getKeywords(cpv_atom);
+        
+        // NEW: Fetch global keywords from make.conf (mapped to */*)
+        Slipper::Dep::Atom global_atom("*/*");
+        auto global_keywords = env_context->keywords_manager->getKeywords(global_atom);
+        accepted_keywords.insert(accepted_keywords.end(), global_keywords.begin(), global_keywords.end());
         
         // Default Portage fallback: if nothing is configured, only accept stable system arch
         if (accepted_keywords.empty()) {
