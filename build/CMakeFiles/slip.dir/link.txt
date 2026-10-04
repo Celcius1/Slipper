@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/slip.dir/link.d CMakeFiles/slip.dir/src/cli/slip.cpp.o -o slip
