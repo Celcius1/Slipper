@@ -11,6 +11,7 @@ Slipper uses a standard CMake build system. The provided build script runs entir
 1. Make the build script executable and compile the daemon and client:
 
 chmod +x build.sh
+
 ./build.sh
 
 2. Install the binaries to your system (respects standard Linux prefixes):
