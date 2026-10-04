@@ -60,4 +60,4 @@ sudo chmod +x /etc/init.d/slipperd
 echo "--- Starting Slipper Daemon ---"
 sudo rc-service slipperd start
 
-echo "Installation Complete! Run 'slip -avuD @world' to test."
+echo "Installation Complete! Run 'slip --in -avsuD @world' to test."
