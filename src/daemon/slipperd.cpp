@@ -501,7 +501,7 @@ int main() {
                     }
 
                     auto end_time = std::chrono::high_resolution_clock::now();
-                    auto duration = std::chrono::duration_cast(end_time - start_time).count();
+                    auto duration = std::chrono::duration_cast < std::chrono::milliseconds > (end_time - start_time).count();
                     
                     if (std::getenv("DEBUG")) {
                         Logger::logDebug("slipperd", "Timer stopped. Resolution completed in " + std::to_string(duration) + " ms.");
