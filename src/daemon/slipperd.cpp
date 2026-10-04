@@ -328,14 +328,11 @@ int main() {
                     std::vector< std::string > repo_paths;
                     Slipper::Repository::RepoConfigLoader repo_loader;
                     
-                    std::string repos_conf = "/etc/portage/repos.conf";
-                    if (!std::filesystem::exists(repos_conf)) {
-                        repos_conf = "/usr/share/portage/config/repos.conf";
-                    }
-
-                    if (std::filesystem::exists(repos_conf)) {
-                        if (std::filesystem::is_directory(repos_conf)) {
-                            for (const auto& entry : std::filesystem::directory_iterator(repos_conf)) {
+                    // 1. ALWAYS parse the system default repository configuration first (Gentoo Main Tree)
+                    std::string default_repos_conf = "/usr/share/portage/config/repos.conf";
+                    if (std::filesystem::exists(default_repos_conf)) {
+                        if (std::filesystem::is_directory(default_repos_conf)) {
+                            for (const auto& entry : std::filesystem::directory_iterator(default_repos_conf)) {
                                 if (entry.is_regular_file()) {
                                     std::ifstream file(entry.path());
                                     std::stringstream buffer;
@@ -344,18 +341,39 @@ int main() {
                                 }
                             }
                         } else {
-                            std::ifstream file(repos_conf);
+                            std::ifstream file(default_repos_conf);
                             std::stringstream buffer;
                             buffer << file.rdbuf();
                             repo_loader.loadFromString(buffer.str());
                         }
-                        
-                        auto mapped_repos = repo_loader.getRepos();
-                        for (const auto& pair : mapped_repos) {
-                            std::string loc = pair.second.location.value_or("");
-                            if (!loc.empty()) {
-                                repo_paths.push_back(loc);
+                    }
+
+                    // 2. Lay the user's custom overlays on top (e.g., Guru, local overlays)
+                    std::string user_repos_conf = "/etc/portage/repos.conf";
+                    if (std::filesystem::exists(user_repos_conf)) {
+                        if (std::filesystem::is_directory(user_repos_conf)) {
+                            for (const auto& entry : std::filesystem::directory_iterator(user_repos_conf)) {
+                                if (entry.is_regular_file()) {
+                                    std::ifstream file(entry.path());
+                                    std::stringstream buffer;
+                                    buffer << file.rdbuf();
+                                    repo_loader.loadFromString(buffer.str());
+                                }
                             }
+                        } else {
+                            std::ifstream file(user_repos_conf);
+                            std::stringstream buffer;
+                            buffer << file.rdbuf();
+                            repo_loader.loadFromString(buffer.str());
+                        }
+                    }
+
+                    // 3. Extract the mapped paths from the combined loader
+                    auto mapped_repos = repo_loader.getRepos();
+                    for (const auto& pair : mapped_repos) {
+                        std::string loc = pair.second.location.value_or("");
+                        if (!loc.empty()) {
+                            repo_paths.push_back(loc);
                         }
                     }
 
