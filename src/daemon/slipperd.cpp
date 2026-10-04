@@ -7,6 +7,7 @@
 #include "fstream"
 #include "filesystem"
 #include "sstream"
+#include "chrono"
 #include "sys/socket.h"
 #include "sys/un.h"
 #include "unistd.h"
@@ -469,6 +470,11 @@ int main() {
 
                     bool resolution_success = false;
 
+                    if (std::getenv("DEBUG")) {
+                        Logger::logDebug("slipperd", "Starting high-resolution timer for dependency graph calculation.");
+                    }
+                    auto start_time = std::chrono::high_resolution_clock::now();
+
                     if (target_package == "@world") {
                         Logger::logInfo("slipperd", "Target is @world. Loading /var/lib/portage/world...");
                         std::vector< Slipper::Dep::Atom > world_atoms;
@@ -494,8 +500,16 @@ int main() {
                         resolution_success = resolver.resolve(state, root_atom);
                     }
 
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    auto duration = std::chrono::duration_cast(end_time - start_time).count();
+                    
+                    if (std::getenv("DEBUG")) {
+                        Logger::logDebug("slipperd", "Timer stopped. Resolution completed in " + std::to_string(duration) + " ms.");
+                    }
+
                     if (resolution_success) {
                         std::cout << "\n" << C_BOLD << "--- Slipper Resolution Complete ---" << C_RESET << std::endl;
+                        std::cout << "Calculated in: " << C_CYAN << duration << " ms" << C_RESET << std::endl;
                         std::cout << "Packages scheduled for slipping:" << std::endl;
 
                         auto all_tracked = state.tracker.getAllPackages();
