@@ -36,16 +36,35 @@ std::vector< std::string > KeywordsManager::getKeywords(const Slipper::Dep::Atom
     // 2. Apply package-specific keywords
     auto it = pkeywords_dict.find(cp);
     if (it != pkeywords_dict.end()) {
-        for (const auto& entry : it->second) {
-            const Slipper::Dep::Atom& config_atom = entry.first;
-            if (config_atom.getCp() == cp) {
-                if (std::getenv("DEBUG")) Logger::logDebug("KeywordsManager::getKeywords", "Applying keywords from config atom: " + config_atom.getRawString());
-                for (const auto& kw : entry.second) {
-                    resolved_keywords.push_back(kw);
-                    if (std::getenv("DEBUG")) Logger::logDebug("KeywordsManager::getKeywords", "Added keyword: " + kw);
+        // Stack the keywords. Like UseManager, this will eventually sort by atom specificity.
+    for (const auto& entry : it->second) {
+        const Slipper::Dep::Atom& config_atom = entry.first;
+        
+        bool match = false;
+        if (config_atom.getCp() == cp) {
+            // If the config atom has a specific version, ensure it matches the package being evaluated
+            if (config_atom.getVersion().has_value()) {
+                if (config_atom.getVersion().value() == pkg.getVersion().value_or("")) {
+                    match = true;
+                }
+            } else {
+                match = true; // Unversioned applies to all
+            }
+        }
+
+        if (match) {
+            if (std::getenv("DEBUG")) {
+                Logger::logDebug("KeywordsManager::getKeywords", "Applying keywords from config atom: " + config_atom.getRawString());
+            }
+            
+            for (const auto& kw : entry.second) {
+                resolved_keywords.push_back(kw);
+                if (std::getenv("DEBUG")) {
+                    Logger::logDebug("KeywordsManager::getKeywords", "Added keyword: " + kw);
                 }
             }
         }
+    }
     } else {
         if (std::getenv("DEBUG")) Logger::logDebug("KeywordsManager::getKeywords", "No package.accept_keywords overrides found for CP: " + cp);
     }
