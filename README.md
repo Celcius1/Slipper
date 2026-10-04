@@ -16,17 +16,16 @@ chmod +x build.sh
 2. Install the binaries to your system (respects standard Linux prefixes):
 
 cd build
-sudo make install
-# or
-doas make install
+
+sudo make install  or  doas make install
 
 3. Add to openRC
 
-Enable the Service
+## Enable the Service
 
 sudo rc-update add slipperd default
 
-Start the Service
+## Start the Service
 
 sudo rc-service slipperd start
 
@@ -41,6 +40,7 @@ Users must be in the `wheel` group to connect to the Slipper daemon via the IPC 
 Install specific packages or upgrade the system:
 
 slip --in -avs sl
+
 slip --in -uD @world
 
 
