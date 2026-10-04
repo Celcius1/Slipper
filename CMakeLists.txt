@@ -33,3 +33,9 @@ target_sources(slipper_tests PUBLIC FILE_SET HEADERS BASE_DIRS include)
 # Native Install Targets mapping to standard Linux paths instead of hardcoded /usr/local/
 install(TARGETS slipperd DESTINATION ${CMAKE_INSTALL_SBINDIR})
 install(TARGETS slip DESTINATION ${CMAKE_INSTALL_BINDIR})
+# Install OpenRC init script with executable permissions
+install(PROGRAMS scripts/slipperd DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/init.d)
+# Install OpenRC configuration file
+install(FILES scripts/slipperd.conf DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/conf.d)
+# Install Native Bash Environment
+install(PROGRAMS src/execution/slipper-functions.sh DESTINATION ${CMAKE_INSTALL_DATADIR}/slipper)

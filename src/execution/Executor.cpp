@@ -203,7 +203,7 @@ bool Executor::filterEnvironment(const std::string& build_dir) const {
 
 bool Executor::executeEbuildPhases(const std::string& ebuild_path, const std::string& cpv, bool stream_output) const {
     std::vector< std::string > phases = {"setup", "unpack", "prepare", "configure", "compile", "install"};
-    std::string wrapper_path = "/usr/local/share/slipper/slipper-functions.sh";
+    std::string wrapper_path = "/usr/share/slipper/slipper-functions.sh";
 
     Slipper::Dep::Atom atom(cpv);
     std::string category = atom.getCp().substr(0, atom.getCp().find('/'));

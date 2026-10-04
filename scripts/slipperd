@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+
+name="Slipper Daemon"
+description="C++ package management daemon"
+command="/usr/sbin/slipperd"
+command_background="yes"
+pidfile="/run/slipper/slipperd.pid"
+
+depend() {
+    need localmount
+    after network
+}
+
+start_pre() {
+    checkpath -d -m 0770 -o root:wheel /run/slipper
+}
