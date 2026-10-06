@@ -1,4 +1,4 @@
-# Slipper (v0.1.2-alpha)
+# Slipper (v0.1.3-alpha)
 
 A C++ package management daemon for Gentoo Linux.
 

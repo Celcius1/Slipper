@@ -34,10 +34,15 @@ save_env() (
         fi
     done < <(declare -F)
     
+    # Save raw files for the Slipper C++ daemon to parse
     declare -fp > "${T}/environment-funcs.raw" 2>/dev/null || true
     
     # Aggressively strip internal read-only bash variables so the source command doesn't abort
     declare -p 2>/dev/null | grep -E -v ' (BASH_[a-zA-Z_]+|BASHOPTS|FUNCNAME|GROUPS|EUID|PPID|UID|SHELLOPTS|DIRSTACK)=' > "${T}/environment-vars.raw" || true
+
+    # Save a native, uncorrupted bash state for phase-to-phase continuity
+    declare -fp > "${T}/bash-env.sh" 2>/dev/null || true
+    declare -p 2>/dev/null | grep -E -v ' (BASH_[a-zA-Z_]+|BASHOPTS|FUNCNAME|GROUPS|EUID|PPID|UID|SHELLOPTS|DIRSTACK)=' >> "${T}/bash-env.sh" || true
 )
 # ---------------------------------------------
 
@@ -305,7 +310,7 @@ default_src_unpack() {
     if [ -n "${A}" ]; then
         for f in ${A}; do 
             einfo "Unpacking ${f}..."
-            tar -xf "/var/cache/distfiles/${f}" || die "Unpack failed on ${f}"
+            tar --no-absolute-filenames --secure-chdir -xf "/var/cache/distfiles/${f}" || die "Unpack failed on ${f}"
         done
     fi
 }
@@ -334,7 +339,10 @@ fi
 source "${EBUILD_PATH}" || die "Failed to parse${EBUILD_PATH}"
 
 # Inline the environment load at the global scope so 'declare' creates global variables
-if [ -f "${T}/environment.sh" ]; then
+# Prefer our native bash-env.sh to bypass C++ string mangling quirks
+if [ -f "${T}/bash-env.sh" ]; then
+    source "${T}/bash-env.sh" || ewarn "Syntax error encountered while loading bash-env.sh!"
+elif [ -f "${T}/environment.sh" ]; then
     source "${T}/environment.sh" || ewarn "Syntax error encountered while loading environment.sh!"
 fi
 

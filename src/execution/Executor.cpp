@@ -13,6 +13,9 @@
 #include <cerrno>
 #include <cstring>
 #include <unistd.h>
+#include <pwd.h>
+#include <grp.h>
+#include <sys/stat.h>
 
 using namespace Slipper::Execution;
 
@@ -102,12 +105,12 @@ bool Executor::fetchSources(const std::vector<std::pair<std::string, std::string
             Logger::logError("Executor::fetchSources", std::string("Fork failed: ") + strerror(errno));
             return false;
         } else if (pid == 0) {
-            // Child process: Execute wget directly, bypassing the shell interpreter
-            execlp("wget", "wget", "-q", "--show-progress", "-O", dest.c_str(), url.c_str(), static_cast< char* >(NULL));
+            // Child process: Execute wget directly using an absolute path to avoid $PATH poisoning
+            execl("/usr/bin/wget", "wget", "-q", "--show-progress", "-O", dest.c_str(), url.c_str(), static_cast< char* >(NULL));
             
-            // If execlp returns, the system call failed entirely
-            Logger::logError("Executor::fetchSources", std::string("execlp failed: ") + strerror(errno));
-            exit(1);
+            // If execl returns, the system call failed entirely
+            Logger::logError("Executor::fetchSources", std::string("execl failed: ") + strerror(errno));
+            _exit(EXIT_FAILURE);
         } else {
             // Parent process: Wait securely for the child to finish
             int status = 0;
@@ -281,6 +284,23 @@ bool Executor::executeEbuildPhases(const std::string& ebuild_path, const std::st
                 }
             }
             
+            if (phase != "install") {
+                struct passwd* pwd = getpwnam("portage");
+                if (pwd != nullptr) {
+                    if (setresgid(pwd->pw_gid, pwd->pw_gid, pwd->pw_gid) == -1) {
+                        Logger::logError("Executor::executeEbuildPhases", std::string("Failed to drop group privileges: ") + strerror(errno));
+                        exit(1);
+                    }
+                    if (setresuid(pwd->pw_uid, pwd->pw_uid, pwd->pw_uid) == -1) {
+                        Logger::logError("Executor::executeEbuildPhases", std::string("Failed to drop user privileges: ") + strerror(errno));
+                        exit(1);
+                    }
+                } else {
+                    Logger::logError("Executor::executeEbuildPhases", "Failed to resolve 'portage' user for privilege separation.");
+                    exit(1);
+                }
+            }
+
             execl("/bin/bash", "bash", wrapper_path.c_str(), ebuild_path.c_str(), phase.c_str(), (char*)NULL);
             exit(1);
         } else if (pid > 0) {
@@ -344,28 +364,59 @@ bool Executor::mergeImage(const std::string& cpv, const std::string& ebuild_path
             
             // The absolute target path on the live system
             std::string target_path = relative_path; 
-            
-            // SECURITY: Prevent TOCTOU symlink traversal attacks on the live system.
-            // If the target path exists and is a symlink, writing to it could traverse outside the intended directory.
-            if (std::filesystem::exists(target_path, ec) && std::filesystem::is_symlink(target_path, ec)) {
-                Logger::logError("Executor::mergeImage", "Security violation: Target path is an existing host symlink. Aborting merge to prevent path traversal: " + target_path);
-                return false; 
-            }
 
-            auto copy_opts = std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::copy_symlinks;
+            // Eliminate Check-Then-Act: Directly remove the target path to break existing symlinks/files
+            std::filesystem::remove(target_path, ec);
 
             if (dir_entry.is_symlink(ec)) {
-                std::filesystem::copy(dir_entry.path(), target_path, copy_opts, ec);
-                contents_file << "sym " << target_path << " -> " << std::filesystem::read_symlink(dir_entry.path(), ec).string() << "\n";
+                std::string link_target = std::filesystem::read_symlink(dir_entry.path(), ec).string();
+                if (symlink(link_target.c_str(), target_path.c_str()) == -1) {
+                    Logger::logError("Executor::mergeImage", std::string("Failed to securely create symlink: ") + strerror(errno));
+                    return false;
+                }
+                contents_file << "sym " << target_path << " -> " << link_target << "\n";
             } else if (dir_entry.is_directory(ec)) {
                 std::filesystem::create_directories(target_path, ec);
                 contents_file << "dir " << target_path << "\n";
             } else {
-                std::filesystem::copy(dir_entry.path(), target_path, copy_opts, ec);
-                if (ec) {
-                    Logger::logError("Executor::mergeImage", "Failed to copy file to live system: " + target_path);
+                int src_fd = open(dir_entry.path().string().c_str(), O_RDONLY | O_CLOEXEC);
+                if (src_fd == -1) {
+                    Logger::logError("Executor::mergeImage", std::string("Failed to open source file: ") + strerror(errno));
                     return false;
                 }
+
+                // Direct OS Enforcement: Atomic file creation preventing symlink traversal (CWE-61) and TOCTOU (CWE-367)
+                int dst_fd = open(target_path.c_str(), O_CREAT | O_WRONLY | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+                if (dst_fd == -1) {
+                    Logger::logError("Executor::mergeImage", std::string("Atomic file creation failed: ") + strerror(errno));
+                    close(src_fd);
+                    return false;
+                }
+
+                char buf[8192];
+                ssize_t bytes_read;
+                while ((bytes_read = read(src_fd, buf, sizeof(buf))) > 0) {
+                    ssize_t bytes_written = 0;
+                    while (bytes_written < bytes_read) {
+                        ssize_t res = write(dst_fd, buf + bytes_written, bytes_read - bytes_written);
+                        if (res == -1) {
+                            Logger::logError("Executor::mergeImage", std::string("Failed to write to target file: ") + strerror(errno));
+                            close(src_fd);
+                            close(dst_fd);
+                            return false;
+                        }
+                        bytes_written += res;
+                    }
+                }
+                
+                struct stat st;
+                if (fstat(src_fd, &st) == 0) {
+                    fchmod(dst_fd, st.st_mode);
+                }
+
+                close(src_fd);
+                close(dst_fd);
+
                 contents_file << "obj " << target_path << "\n";
             }
         }
@@ -435,7 +486,26 @@ bool Executor::slipQueue(const std::vector< std::string >& merge_queue, bool str
         if (Logger::isDebugEnabled()) {
             Logger::logDebug("Executor::slipQueue", "Updating dynamic linker cache via ldconfig.");
         }
-        system("ldconfig");
+        pid_t ld_pid = fork();
+        if (ld_pid == -1) {
+            Logger::logError("Executor", std::string("Fork failed for ldconfig: ") + strerror(errno));
+        } else if (ld_pid == 0) {
+            execl("/sbin/ldconfig", "ldconfig", (char*)NULL);
+            
+            Logger::logError("Executor", std::string("execl failed for ldconfig: ") + strerror(errno));
+            _exit(EXIT_FAILURE);
+        } else {
+            int status = 0;
+            waitpid(ld_pid, &status, 0);
+            
+            if (WIFEXITED(status)) {
+                if (WEXITSTATUS(status) == 127) {
+                    Logger::logError("Executor", "Execution failure: ldconfig not found (status 127).");
+                } else if (WEXITSTATUS(status) != 0) {
+                    Logger::logError("Executor", "ldconfig failed with exit status: " + std::to_string(WEXITSTATUS(status)));
+                }
+            }
+        }
 
         if (!stream_output) {
             std::cout << " * Executing phase: clean..." << std::endl;
@@ -546,7 +616,26 @@ bool Executor::slipOut(const std::string& cpv) {
     if (Logger::isDebugEnabled()) {
         Logger::logDebug("Executor::slipOut", "Updating dynamic linker cache via ldconfig.");
     }
-    system("ldconfig");
+    pid_t ld_pid = fork();
+        if (ld_pid == -1) {
+            Logger::logError("Executor", std::string("Fork failed for ldconfig: ") + strerror(errno));
+        } else if (ld_pid == 0) {
+            execl("/sbin/ldconfig", "ldconfig", (char*)NULL);
+            
+            Logger::logError("Executor", std::string("execl failed for ldconfig: ") + strerror(errno));
+            _exit(EXIT_FAILURE);
+        } else {
+            int status = 0;
+            waitpid(ld_pid, &status, 0);
+            
+            if (WIFEXITED(status)) {
+                if (WEXITSTATUS(status) == 127) {
+                    Logger::logError("Executor", "Execution failure: ldconfig not found (status 127).");
+                } else if (WEXITSTATUS(status) != 0) {
+                    Logger::logError("Executor", "ldconfig failed with exit status: " + std::to_string(WEXITSTATUS(status)));
+                }
+            }
+        }
 
     std::cout << ">>> Successfully slipped out " << cpv << "\n" << std::endl;
     return true;

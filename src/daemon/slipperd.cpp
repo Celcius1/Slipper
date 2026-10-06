@@ -18,6 +18,7 @@
 #include <grp.h>
 #include <fcntl.h>
 #include <string_view>
+#include <regex>
 #include "../../include/Logger.hpp"
 #include "../../include/dep/Atom.hpp"
 #include "../../include/Versions.hpp"
@@ -191,6 +192,28 @@ int main() {
                     std::cout << "[!] No valid target package specified." << std::endl;
                     close(client_sock);
                     exit(1);
+                }
+
+                // --- CWE-20 Strict Input Validation (Zero Trust Boundary) ---
+                // Enforce Gentoo PMS Chapter 3 Allow-list and reject path traversal attempts
+                const std::regex VALID_ATOM_REGEX("^[A-Za-z0-9\\+\\_\\.\\-\\/\\=\\<\\>\\~\\*\\!\\[\\],:]+$");
+                
+                for (const auto& target_view : targets) {
+                    std::string target(target_view);
+                    
+                    if (!std::regex_match(target, VALID_ATOM_REGEX)) {
+                        Logger::logError("slipperd", "Validation Failure: Malformed characters detected in input: " + target);
+                        std::cout << "[!] \033[31mFATAL:\033[0m Invalid characters in target package: " << target << std::endl;
+                        close(client_sock);
+                        _exit(EXIT_FAILURE);
+                    }
+                    
+                    if (target.find("../") != std::string::npos || target.find("/..") != std::string::npos) {
+                        Logger::logError("slipperd", "Validation Failure: Path traversal attempt detected: " + target);
+                        std::cout << "[!] \033[31mFATAL:\033[0m Path traversal explicitly blocked: " << target << std::endl;
+                        close(client_sock);
+                        _exit(EXIT_FAILURE);
+                    }
                 }
 
                 // ------------------------------------------------------------------

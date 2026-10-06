@@ -12,12 +12,10 @@ cd build
 
 echo "--- Configuring with CMake ---"
 # Generate the Makefiles using the CMakeLists.txt located in the parent directory
-cmake ..
+cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc ..
 
 echo "--- Compiling Slipper ---"
 # Compile the project using all available CPU cores to optimise build times
 make -j$(nproc)
 
 echo "--- Compilation Complete ---"
-echo "You can now run the binary with your debug tracing active by setting:"
-echo "export DEBUG="1" in /etc/conf.d/slipperd"
