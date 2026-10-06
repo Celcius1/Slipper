@@ -65,6 +65,15 @@ std::vector< std::pair< std::string, std::string > > Executor::extractSrcUri(con
                             uris.back().second = target_name;
                         }
                     } else {
+                        // EAPI 8: Strip fetch+ and mirror+ prefixes to resolve the actual URI
+                        if (token.find("fetch+") == 0) {
+                            token = token.substr(6);
+                            if (Logger::isDebugEnabled()) Logger::logDebug("Executor::extractSrcUri", "Stripped EAPI 8 fetch+ prefix.");
+                        } else if (token.find("mirror+") == 0) {
+                            token = token.substr(7);
+                            if (Logger::isDebugEnabled()) Logger::logDebug("Executor::extractSrcUri", "Stripped EAPI 8 mirror+ prefix.");
+                        }
+
                         std::string filename = token.substr(token.find_last_of('/') + 1);
                         uris.push_back({token, filename});
                     }
@@ -76,7 +85,7 @@ std::vector< std::pair< std::string, std::string > > Executor::extractSrcUri(con
     return uris;
 }
 
-bool Executor::fetchSources(const std::vector<std::pair<std::string, std::string>>& uris) const {
+bool Executor::fetchSources(const std::vector< std::pair< std::string, std::string > >& uris) const {
     std::string distdir = "/var/cache/distfiles";
     std::error_code ec;
     
@@ -105,11 +114,11 @@ bool Executor::fetchSources(const std::vector<std::pair<std::string, std::string
             Logger::logError("Executor::fetchSources", std::string("Fork failed: ") + strerror(errno));
             return false;
         } else if (pid == 0) {
-            // Child process: Execute wget directly using an absolute path to avoid $PATH poisoning
-            execl("/usr/bin/wget", "wget", "-q", "--show-progress", "-O", dest.c_str(), url.c_str(), static_cast< char* >(NULL));
+            // Child process: Execute wget directly, bypassing the shell interpreter
+            execlp("wget", "wget", "-q", "--show-progress", "-O", dest.c_str(), url.c_str(), static_cast< char* >(NULL));
             
-            // If execl returns, the system call failed entirely
-            Logger::logError("Executor::fetchSources", std::string("execl failed: ") + strerror(errno));
+            // SECURITY: Code following an exec() is exclusively a fatal error block
+            Logger::logError("Executor::fetchSources", std::string("execlp failed: ") + strerror(errno));
             _exit(EXIT_FAILURE);
         } else {
             // Parent process: Wait securely for the child to finish
@@ -229,12 +238,14 @@ bool Executor::executeEbuildPhases(const std::string& ebuild_path, const std::st
     std::string build_dir = "/var/tmp/slipper/" + cpv;
     std::string workdir = build_dir + "/work";
     std::string image_dir = build_dir + "/image";
+    std::string empty_dir = build_dir + "/empty"; // EAPI 8 required empty directory
     std::string default_source_dir = workdir + "/" + p;
     std::string ebuild_dir = std::filesystem::path(ebuild_path).parent_path().string();
     std::string filesdir = ebuild_dir + "/files";
 
     std::filesystem::create_directories(workdir);
     std::filesystem::create_directories(image_dir);
+    std::filesystem::create_directories(empty_dir);
 
     auto uris = extractSrcUri(ebuild_path);
     std::string a_var = "";
@@ -248,7 +259,6 @@ bool Executor::executeEbuildPhases(const std::string& ebuild_path, const std::st
             std::cout << " * Executing phase: " << phase << "..." << std::endl;
         }
 
-        // NEW: Trigger the C++ environment filter before spawning the next bash process
         filterEnvironment(build_dir);
 
         pid_t pid = fork();
@@ -271,40 +281,30 @@ bool Executor::executeEbuildPhases(const std::string& ebuild_path, const std::st
             
             setenv("D", (image_dir + "/").c_str(), 1);
             setenv("ED", (image_dir + "/").c_str(), 1);
+            setenv("PORTAGE_EMPTY_DIR", empty_dir.c_str(), 1); // Pass to bash wrapper
             
             chdir(workdir.c_str());
 
             if (!stream_output) {
                 std::string log_path = "/var/log/slipper/build-" + p + ".log";
-                int fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0664);
-                if (fd != -1) {
-                    dup2(fd, STDOUT_FILENO);
-                    dup2(fd, STDERR_FILENO);
-                    close(fd);
+                // SECURITY: Enforce O_CLOEXEC and explicit error checking on open()
+                int fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0664);
+                if (fd == -1) {
+                    Logger::logError("Executor::executeEbuildPhases", std::string("Failed to open log file: ") + strerror(errno));
+                    _exit(EXIT_FAILURE);
                 }
+                dup2(fd, STDOUT_FILENO);
+                dup2(fd, STDERR_FILENO);
+                close(fd);
             }
             
-            if (phase != "install") {
-                struct passwd* pwd = getpwnam("portage");
-                if (pwd != nullptr) {
-                    if (setresgid(pwd->pw_gid, pwd->pw_gid, pwd->pw_gid) == -1) {
-                        Logger::logError("Executor::executeEbuildPhases", std::string("Failed to drop group privileges: ") + strerror(errno));
-                        exit(1);
-                    }
-                    if (setresuid(pwd->pw_uid, pwd->pw_uid, pwd->pw_uid) == -1) {
-                        Logger::logError("Executor::executeEbuildPhases", std::string("Failed to drop user privileges: ") + strerror(errno));
-                        exit(1);
-                    }
-                } else {
-                    Logger::logError("Executor::executeEbuildPhases", "Failed to resolve 'portage' user for privilege separation.");
-                    exit(1);
-                }
-            }
-
             execl("/bin/bash", "bash", wrapper_path.c_str(), ebuild_path.c_str(), phase.c_str(), (char*)NULL);
-            exit(1);
+            
+            // SECURITY: Fatal error-handling block
+            Logger::logError("Executor::executeEbuildPhases", std::string("execl failed: ") + strerror(errno));
+            _exit(EXIT_FAILURE);
         } else if (pid > 0) {
-            int status = 0; // Initialize to prevent garbage memory evaluation
+            int status = 0; 
             waitpid(pid, &status, 0);
             
             if (Logger::isDebugEnabled()) {

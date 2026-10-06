@@ -13,6 +13,7 @@ namespace Resolver {
 struct ParsedDeps {
     std::vector< Slipper::Dep::Atom > mandatory;
     std::vector< std::vector< Slipper::Dep::Atom > > disjunctive;
+    std::vector< Slipper::Dep::Atom > idepend; // EAPI 8 Install-time dependencies
 };
 
 class Resolver {

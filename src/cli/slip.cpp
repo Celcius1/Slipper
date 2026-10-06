@@ -6,8 +6,20 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
+#include "../include/Version.hpp"
 
 int main(int argc, char* argv[]) {
+    // Intercept version flag before initiating IPC connection
+    for (int i = 1; i < argc; ++i) {
+        std::string arg(argv[i]);
+        if (arg == "--version" || arg == "-V") {
+            std::cout << "Slipper Package Manager v" << Slipper::Config::SLIPPER_VERSION << std::endl;
+            std::cout << "Copyright (c) 2026 Cel-Tech-Serv Pty Ltd. Licensed under GPL-2.0." << std::endl;
+            return 0;
+        }
+    }
+    
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) {
         std::cerr << "[!] Slipper CLI: Failed to create socket." << std::endl;

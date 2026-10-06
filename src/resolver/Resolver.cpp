@@ -62,11 +62,17 @@ bool Resolver::createGraph(ResolutionState& state) {
             Slipper::Dep::Atom target_atom(target_cpv);
             auto active_use = env_context->use_manager->getPUSE(target_atom);
 
-            std::vector< std::string > wants = {"DEPEND", "RDEPEND"};
+            // Fetch DEPEND, RDEPEND, and EAPI 8 IDEPEND
+            std::vector< std::string > wants = {"DEPEND", "RDEPEND", "IDEPEND"};
             auto metadata = env_context->portdb->aux_get(target_cpv, wants);
             std::string combined_deps = metadata[0] + " " + metadata[1];
+            std::string idepend_deps = metadata[2];
             
             auto parsed_deps = parseDependencies(combined_deps, active_use);
+            auto parsed_idepend = parseDependencies(idepend_deps, active_use);
+
+            // Queue idepend as mandatory since they run locally on the CBUILD host
+            parsed_deps.mandatory.insert(parsed_deps.mandatory.end(), parsed_idepend.mandatory.begin(), parsed_idepend.mandatory.end());
 
             if (Logger::isDebugEnabled()) {
                 Logger::logDebug("Resolver::createGraph", "Queuing " + std::to_string(parsed_deps.mandatory.size()) + " mandatory and " + std::to_string(parsed_deps.disjunctive.size()) + " OR blocks for " + target_cpv);
@@ -328,8 +334,6 @@ ParsedDeps Resolver::parseDependencies(const std::string& dep_string, const std:
     std::stringstream ss(dep_string);
     std::string token;
 
-    // Context Stack tracks the active parsing state
-    // 0 = Mandatory, 1 = OR block (||), 2 = Skipped (failed USE condition)
     std::vector< int > context_stack;
     context_stack.push_back(0); 
 
@@ -338,13 +342,12 @@ ParsedDeps Resolver::parseDependencies(const std::string& dep_string, const std:
     std::vector< Slipper::Dep::Atom > current_or_group;
 
     while (ss >> token) {
-        // 1. Detect OR operator
-        if (token == "||") {
+        // EAPI 8: Handled exactly-one-of ^^ blocks
+        if (token == "||" || token == "^^") {
             next_is_or = true;
             continue;
         }
 
-        // 2. Evaluate USE conditions (e.g., flag? or !flag?)
         if (token.back() == '?') {
             std::string flag = token.substr(0, token.size() - 1);
             bool is_negative = (!flag.empty() && flag[0] == '!');
@@ -353,34 +356,35 @@ ParsedDeps Resolver::parseDependencies(const std::string& dep_string, const std:
             bool condition_met = is_negative ? (active_use.find(flag) == active_use.end()) 
                                              : (active_use.find(flag) != active_use.end());
 
-            // If the condition fails, we flag the next block to be skipped
             if (!condition_met) skip_next_block = true;
             continue;
         }
 
-        // 3. Handle Block Openings
         if (token == "(") {
             if (context_stack.back() == 2 || skip_next_block) {
-                context_stack.push_back(2); // Inherit skipped state
+                context_stack.push_back(2); 
                 skip_next_block = false;
                 next_is_or = false;
             } else if (next_is_or) {
-                context_stack.push_back(1); // Enter active OR block
+                context_stack.push_back(1); 
                 next_is_or = false;
             } else {
-                context_stack.push_back(0); // Enter standard nested block
+                context_stack.push_back(0); 
             }
             continue;
         }
 
-        // 4. Handle Block Closings
         if (token == ")") {
             if (context_stack.size() > 1) {
                 int ending_context = context_stack.back();
                 context_stack.pop_back();
 
-                // If we just successfully closed an active OR block, commit the group
-                if (ending_context == 1 && !current_or_group.empty()) {
+                if (ending_context == 1) {
+                    // EAPI 8: Empty any-of or exactly-one-of groups mathematically evaluate to false
+                    if (current_or_group.empty()) {
+                        Logger::logError("Resolver::parseDependencies", "EAPI 8 Violation: Empty || or ^^ group detected. Dependency graph unresolvable.");
+                        throw std::runtime_error("Empty disjunctive dependency group mathematically evaluates to false.");
+                    }
                     result.disjunctive.push_back(current_or_group);
                     current_or_group.clear();
                 }
@@ -388,18 +392,13 @@ ParsedDeps Resolver::parseDependencies(const std::string& dep_string, const std:
             continue;
         }
 
-        // 5. Normal Token Processing
-        // Only evaluate the atom if we are not inside a skipped context
         if (context_stack.back() != 2) {
-            
-            // Strip inline USE dependencies (e.g., [ssl, -static]) to prevent Atom parsing failures
             auto bracket_pos = token.find('[');
             if (bracket_pos != std::string::npos) {
                 token = token.substr(0, bracket_pos);
             }
 
             try {
-                // Check if we are inside an active OR block ANYWHERE in the current stack
                 bool in_active_or = false;
                 for (auto it = context_stack.rbegin(); it != context_stack.rend(); ++it) {
                     if (*it == 1) { in_active_or = true; break; }

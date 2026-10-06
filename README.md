@@ -1,4 +1,4 @@
-# Slipper (v0.1.3-alpha)
+# Slipper (v0.1.4-alpha)
 
 A C++ package management daemon for Gentoo Linux.
 
@@ -59,3 +59,4 @@ slip --out -avs sl
 * `-s` : Stream daemon output to console instead of remaining silent.
 * `-u` : Update (Enforces resolution of the highest available versions).
 * `-D` : Deep (Traverses the full dependency tree).
+* '-V' : Version prints current software version to the console.

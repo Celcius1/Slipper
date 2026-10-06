@@ -155,6 +155,12 @@ ver_test() {
 # -------------------------------------------------------------
 
 # --- Portage Core Baseline EAPI Helpers ---
+
+# EAPI 8: Banned commands
+useq() { die "useq is banned in EAPI 8. Use 'use' instead."; }
+hasv() { die "hasv is banned in EAPI 8. Use 'has' instead."; }
+hasq() { die "hasq is banned in EAPI 8. Use 'has' instead."; }
+
 has() {
     local needle="${1}"
     shift
@@ -170,7 +176,7 @@ has_version() { return 0; }
 EXPORT_FUNCTIONS() {
     local phase
     for phase in "${@}"; do
-        eval "${phase}() { ${ECLASS}_${phase} \"\$@\"; }"
+        eval "${phase}() { ${ECLASS}_${phase} \\"$@\\"; }"
     done
 }
 
@@ -187,6 +193,15 @@ use() {
             return 0
         fi
     done
+    return 1
+}
+
+# EAPI 8: usev takes an optional second argument. If true, prints $2, else $1.
+usev() {
+    if use "${1}"; then
+        echo "${2:-${1}}"
+        return 0
+    fi
     return 1
 }
 
@@ -297,7 +312,29 @@ einstalldocs() {
 
 econf() { 
     einfo "Configuring..."
-    ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var "${@}" || die "econf failed"
+    
+    local conf_args=( --prefix=/usr --sysconfdir=/etc --localstatedir=/var )
+    
+    if [ -f "./configure" ]; then
+        local help_text
+        help_text="$(./configure --help 2>/dev/null)"
+        
+        # EAPI 8 specific support flags
+        if echo "${help_text}" | grep -q -- "--datarootdir"; then
+            conf_args+=( "--datarootdir=${EPREFIX}/usr/share" )
+        fi
+        if echo "${help_text}" | grep -q -- "--disable-static"; then
+            conf_args+=( "--disable-static" )
+        fi
+        if echo "${help_text}" | grep -q -- "--disable-dependency-tracking"; then
+            conf_args+=( "--disable-dependency-tracking" )
+        fi
+        if echo "${help_text}" | grep -q -- "--disable-silent-rules"; then
+            conf_args+=( "--disable-silent-rules" )
+        fi
+    fi
+    
+    ./configure "${conf_args[@]}" "${@}" || die "econf failed"
 }
 
 emake() { 
@@ -306,12 +343,74 @@ emake() {
 }
 
 default_pkg_setup() { return 0; }
-default_src_unpack() { 
+
+# --- Slipper Native EAPI 8 Unpack Engine ---
+
+unpack() {
+    # SECURITY: Prevent host environment pollution from poisoning the tar execution
+    unset TAR_OPTIONS
+
+    local f
+    for f in "${@}"; do
+        local srcfile=""
+        
+        # EAPI 8 allows absolute paths and paths relative to the working directory[cite: 128]
+        if [[ "${f}" == /* ]] || [[ "${f}" == ./* ]]; then
+            srcfile="${f}"
+        else
+            srcfile="/var/cache/distfiles/${f}"
+        fi
+
+        if [ ! -s "${srcfile}" ]; then
+            die "unpack: file does not exist or is empty: ${srcfile}"
+        fi
+
+        einfo "Unpacking ${f}..."
+        
+        # EAPI 8: Case-insensitive matching for extensions[cite: 128]
+        local lower_f="${f,,}"
+
+        case "${lower_f}" in
+            *.tar)
+                command tar -xf "${srcfile}" || die "Unpacking ${f} failed"
+                ;;
+            *.tar.gz|*.tgz|*.tar.z)
+                command tar -xzf "${srcfile}" || die "Unpacking ${f} failed"
+                ;;
+            *.tar.bz2|*.tbz2|*.tar.bz|*.tbz)
+                command tar -xjf "${srcfile}" || die "Unpacking ${f} failed"
+                ;;
+            *.tar.xz|*.txz)
+                command tar -xJf "${srcfile}" || die "Unpacking ${f} failed"
+                ;;
+            *.gz|*.z)
+                command gzip -dc "${srcfile}" > "${f%.*}" || die "Unpacking ${f} failed"
+                ;;
+            *.bz2|*.bz)
+                command bzip2 -dc "${srcfile}" > "${f%.*}" || die "Unpacking ${f} failed"
+                ;;
+            *.xz)
+                command xz -dc "${srcfile}" > "${f%.*}" || die "Unpacking ${f} failed"
+                ;;
+            *.zip|*.jar)
+                command unzip -qo "${srcfile}" || die "Unpacking ${f} failed"
+                ;;
+            *)
+                ewarn "unpack: unrecognised file format: ${f}"
+                ;;
+        esac
+    done
+
+    # EAPI 8 Mandatory Permissions Fix:
+    # All objects get a+r, u+w, go-w. All directories get a+x.
+    # Excludes the current working directory itself.[cite: 126]
+    find . -mindepth 1 -exec chmod a+r,u+w,go-w {} + || die "Failed to adjust unpacked file permissions"
+    find . -mindepth 1 -type d -exec chmod a+x {} + || die "Failed to adjust unpacked directory permissions"
+}
+
+default_src_unpack() {
     if [ -n "${A}" ]; then
-        for f in ${A}; do 
-            einfo "Unpacking ${f}..."
-            tar --no-absolute-filenames --secure-chdir -xf "/var/cache/distfiles/${f}" || die "Unpack failed on ${f}"
-        done
+        unpack ${A}
     fi
 }
 default_src_prepare() { return 0; }
@@ -352,7 +451,14 @@ export EBUILD_PHASE="${PHASE}"
 
 einfo "Executing phase: ${PHASE}"
 
-if [ "${PHASE}" != "setup" ] && [ "${PHASE}" != "unpack" ]; then
+# EAPI 8 Requirement: pkg_* phases MUST execute in a completely empty directory
+if [[ "${PHASE}" == pkg_* ]]; then
+    if [ -d "${PORTAGE_EMPTY_DIR}" ]; then
+        cd "${PORTAGE_EMPTY_DIR}" || die "Failed to enter EAPI 8 empty directory for ${PHASE}"
+    else
+        die "EAPI 8 empty directory missing: ${PORTAGE_EMPTY_DIR}"
+    fi
+elif [ "${PHASE}" != "setup" ] && [ "${PHASE}" != "unpack" ]; then
     if [ -n "${S}" ]; then
         if [ -d "${S}" ]; then
             cd "${S}" || die "Failed to enter source directory: ${S}"
@@ -363,13 +469,17 @@ if [ "${PHASE}" != "setup" ] && [ "${PHASE}" != "unpack" ]; then
 fi
 
 case "${PHASE}" in
-    setup)      pkg_setup ;;
-    unpack)     src_unpack ;;
-    prepare)    src_prepare ;;
-    configure)  src_configure ;;
-    compile)    src_compile ;;
-    install)    src_install ;;
-    *)          die "Unknown phase requested by Slipper daemon: ${PHASE}" ;;
+    setup)     pkg_setup ;;
+    unpack)    src_unpack ;;
+    prepare)   src_prepare ;;
+    configure) src_configure ;;
+    compile)   src_compile ;;
+    install)   src_install ;;
+    preinst)   pkg_preinst ;;
+    postinst)  pkg_postinst ;;
+    prerm)     pkg_prerm ;;
+    postrm)    pkg_postrm ;;
+    *)         die "Unknown phase requested by Slipper daemon: ${PHASE}" ;;
 esac
 
 save_env

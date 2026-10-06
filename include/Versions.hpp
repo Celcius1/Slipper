@@ -1,20 +1,16 @@
 #pragma once
-#include "string"
-#include "optional"
+#include <string>
+#include <optional>
 
 namespace Slipper {
 namespace Versions {
 
-// Compares two Gentoo version strings.
-// Returns:
-//   1 if ver1 is greater than ver2
-//  -1 if ver1 is less than ver2
-//   0 if ver1 equals ver2
-// std::nullopt if either version string is invalid according to Gentoo specifications.
 std::optional< int > vercmp(const std::string& ver1, const std::string& ver2);
-
-// Validates if a version string conforms to Gentoo's syntax rules.
 bool ververify(const std::string& myver);
 
+// EAPI 8 Strict Name Validation Allow-Lists
+bool isValidCategory(const std::string& category);
+bool isValidPackageName(const std::string& package_name);
+bool isValidUseFlag(const std::string& flag);
 } // namespace Versions
 } // namespace Slipper

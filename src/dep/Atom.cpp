@@ -1,4 +1,5 @@
 #include "../../include/dep/Atom.hpp"
+#include "../../include/Versions.hpp"
 #include "../../include/Logger.hpp"
 
 // System headers using double quotes to prevent UI stripping
@@ -37,22 +38,28 @@ void Atom::parse() {
     category = working_str.substr(0, slash_pos);
     std::string pkg_and_version = working_str.substr(slash_pos + 1);
 
-    // BUG FIX: The old greedy regex choked on packages with numbers in the name (e.g., unreal-tournament-2004).
-    // This strict regex forces a match only for valid Gentoo versions anchored at the end of the string.
+    // SECURITY: CWE-20 Strict Allow-Listing for Category
+    // Exception: Explicitly permit the '*' wildcard used by global configuration files (e.g. make.conf)
+    if (category != "*" && !Slipper::Versions::isValidCategory(category)) {
+        Logger::logError("Atom::parse", "EAPI 8 Violation: Malformed category detected: " + category);
+        throw std::invalid_argument("Invalid Gentoo category name: " + category);
+    }
+
     std::smatch match;
     std::regex version_regex("-([0-9]+(?:\\.[0-9]+)*[a-z]?(?:_(?:alpha|beta|pre|rc|p)[0-9]*)*(?:-r[0-9]+)?)$");
     
     if (std::regex_search(pkg_and_version, match, version_regex)) {
         package_name = pkg_and_version.substr(0, match.position());
         version = match[1].str();
-        if (Logger::isDebugEnabled()) {
-            Logger::logDebug("Atom::parse", "Extracted Package: " + package_name + ", Version: " + version.value());
-        }
     } else {
         package_name = pkg_and_version;
-        if (Logger::isDebugEnabled()) {
-            Logger::logDebug("Atom::parse", "Extracted Package: " + package_name + " (Unversioned)");
-        }
+    }
+
+    // SECURITY: CWE-20 Strict Allow-Listing for Package Name
+    // Exception: Explicitly permit the '*' wildcard used by global configuration files
+    if (package_name != "*" && !Slipper::Versions::isValidPackageName(package_name)) {
+        Logger::logError("Atom::parse", "EAPI 8 Violation: Malformed package name detected: " + package_name);
+        throw std::invalid_argument("Invalid Gentoo package name: " + package_name);
     }
 }
 
